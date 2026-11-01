@@ -38,7 +38,7 @@ proyecto.
 - <Mensaje o sección clave 3>
 
 ## De dónde salió
-Esto conecta el output final con su razonamiento en el grafo.
+Esto conecta el output final con su razonamiento en el mapa.
 - **Decisiones:** [[decision-...]]
 - **Conocimiento:** [[...]]
 - **Fuentes:** [[apellido-anio-tema]], [[sitio-tema]]

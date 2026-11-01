@@ -63,7 +63,7 @@ class BrainmeTest(unittest.TestCase):
         self.assertIn("Cambios automáticos (BRAIN migrar --aplicar): 5", salida)
         self.brain("migrar", "--aplicar")
         claude_md = self.leer("CLAUDE.md")
-        self.assertTrue(claude_md.endswith("**Configurado con brainme:** 2026-01-01 · **Versión:** 2.1.0\n"))
+        self.assertTrue(claude_md.endswith("**Configurado con brainme:** 2026-01-01 · **Versión:** 2.2.0\n"))
         self.assertNotIn("## graphify", claude_md)
         self.assertEqual(json.loads(self.leer(".claude/settings.json")), {})
         self.assertIn("**/_versiones/", self.leer(".graphifyignore"))
@@ -107,6 +107,18 @@ class BrainmeTest(unittest.TestCase):
         self.assertIn("Notas largas (más de 1.000 palabras): 1 -> [[idea-larga]]", salida)
         self.assertIn("Copias en conflicto de iCloud: 1", salida)
         self.assertIn("Versiones viejas sueltas en 05_exports: 1", salida)
+
+    def test_mapa_sin_graphify(self):
+        with open(os.path.join(self.raiz, "01_knowledge/idea-larga.md"), "a", encoding="utf-8") as f:
+            f.write("\nVer [[nota-que-no-existe]].\n")
+        salida = self.brain("mapa")
+        self.assertIn("Mapa: 5 notas, 1 conexión · 1 isla, 1 enlace roto (revisa el jardín)", salida)
+        self.assertIn("[[nota-que-no-existe]] en [[idea-larga]]", salida)
+        nota = self.brain("mapa", "--nota", "decision-precio")
+        self.assertIn("[[decision-precio]] · Cobramos por fase. (02_decisions)", nota)
+        self.assertIn("La enlazan (1):\n  [[idea-central]]", nota)
+        camino = self.brain("mapa", "--camino", "idea-central", "decision-precio")
+        self.assertIn("[[idea-central]] → [[decision-precio]]", camino)
 
     def test_versiones_y_mover(self):
         self.brain("versiones", "--plan", ".brainme/plan.json")

@@ -2,8 +2,10 @@
 """Herramienta de brainme: estado del proyecto y orden sin romper enlaces.
 
 Subcomandos (se corren desde la raíz del proyecto):
-  sincroniza   graphify update . y deja solo el último respaldo del grafo
-  estado       resumen compacto para ponerse al día (inbox, preguntas, decisiones, grafo)
+  sincroniza   resumen del mapa y, si el proyecto usa Graphify, graphify update .
+  estado       resumen compacto para ponerse al día (inbox, preguntas, decisiones, mapa)
+  mapa         mapa de enlaces entre notas: lo más conectado, islas, enlaces rotos,
+               los vecinos de una nota (--nota) o el camino entre dos (--camino)
   nombres      índice de nombres de notas por carpeta (para detectar duplicados)
   inventario   lista lo que hay y qué falta ordenar -> .brainme/inventario.json
   respaldo     zip de todo el proyecto -> .brainme/respaldos/
@@ -34,7 +36,9 @@ import unicodedata
 import zipfile
 from urllib.parse import unquote
 
-VERSION = "2.1.0"
+VERSION = "2.2.0"
+# Última versión que cambió algo dentro de los proyectos: los anteriores piden migrar
+VERSION_PROYECTO = "2.1.0"
 
 ESTRUCTURA = [
     "00_inbox", "01_knowledge", "02_decisions", "03_open_questions/archive",
@@ -908,15 +912,30 @@ def limpiar_respaldos_grafo(raiz):
     return borradas
 
 
+def usa_graphify(raiz):
+    """El proyecto eligió Graphify para la lectura profunda (configurar o versiones anteriores)."""
+    return any(os.path.exists(os.path.join(raiz, n)) for n in ("graphify-out", ".graphifyignore"))
+
+
 def cmd_sincroniza(args):
     raiz = os.path.abspath(args.raiz)
+    if usa_graphify(raiz):
+        sincroniza_graphify(raiz)
+    print(linea_mapa(mapa_de_enlaces(raiz, listar_archivos(raiz))))
+
+
+def sincroniza_graphify(raiz):
     exe = shutil.which("graphify")
     if not exe:
-        print("No encuentro el comando graphify (ver references/problemas.md).")
-        sys.exit(1)
-    r = subprocess.run([exe, "update", "."], cwd=raiz)
+        print("Graphify no está instalado en este computador: el mapa de brainme funciona igual "
+              "y la lectura profunda queda para un computador que lo tenga.")
+        return
+    r = subprocess.run([exe, "update", "."], cwd=raiz, capture_output=True, text=True)
     if r.returncode != 0:
+        print("graphify update falló (ver references/problemas.md):")
+        print("\n".join((r.stdout + r.stderr).strip().splitlines()[-8:]))
         sys.exit(r.returncode)
+    print("Graphify al día.")
     borradas = limpiar_respaldos_grafo(raiz)
     if borradas:
         print("Respaldos viejos del grafo borrados: %s (queda el último)." % ", ".join(borradas))
@@ -987,8 +1006,12 @@ def cmd_estado(args):
     print("Notas creadas o editadas en los últimos 7 días: %d" % len(movidas))
     estado_21(raiz, rels, texto_claude, configurado)
 
+    datos = mapa_de_enlaces(raiz, rels)
+    print(linea_mapa(datos))
+    if datos[0]:
+        print("Lo más conectado: " + ", ".join(
+            "[[%s]] (%d)" % (nombre_nota(r), n) for r, n in mas_conectadas(datos, 5)))
     if not os.path.exists(os.path.join(raiz, "graphify-out", "graph.json")):
-        print("Grafo: todavía no existe (nace con la primera nota al sincronizar).")
         return
     py = python_de_graphify(raiz)
     if py:
@@ -1001,21 +1024,13 @@ def cmd_estado(args):
         except (ValueError, IndexError):
             pend = None
         if pend is not None:
-            notas = [f for f in pend if os.path.splitext(f)[1].lower() in (".md", ".txt")]
             otros = {}
             for f in pend:
-                cat = categoria(f)
-                if f not in notas:
-                    otros[cat] = otros.get(cat, 0) + 1
-            print("Lectura profunda: " + (
-                "recomendada para " + ", ".join("%d %s" % (v, NOMBRES_CAT.get(k, k)) for k, v in otros.items())
-                if otros else "no hace falta") +
-                ("  (%d notas sin leer a fondo; sus enlaces ya están en el grafo)" % len(notas) if notas else ""))
-    hubs = correr(["graphify", "god-nodes", "--top", "5"], raiz)
-    if hubs:
-        nombres = re.findall(r"^\s*\d+\.\s+(.+?)\s+-\s+(\d+) edges", hubs, re.M)
-        if nombres:
-            print("Lo más conectado del grafo: " + ", ".join("%s (%s)" % n for n in nombres))
+                if os.path.splitext(f)[1].lower() not in (".md", ".txt"):
+                    otros[categoria(f)] = otros.get(categoria(f), 0) + 1
+            if otros:
+                print("Lectura profunda (Graphify): recomendada para " + ", ".join(
+                    "%d %s" % (v, NOMBRES_CAT.get(k, k)) for k, v in otros.items()))
 
 
 def cmd_nombres(args):
@@ -1100,6 +1115,151 @@ def cmd_verificar(args):
     if args.json:
         with open(args.json, "w", encoding="utf-8") as f:
             json.dump({"rotos": rotos, "repetidos": repetidos}, f, ensure_ascii=False, indent=1)
+
+
+# ----------------------------------------------------------- mapa de enlaces
+
+def nombre_nota(rel):
+    return rel.rsplit("/", 1)[-1][:-3]
+
+
+def mapa_de_enlaces(raiz, rels):
+    """Wikilinks entre las notas de la estructura, leídos sin Graphify.
+    Devuelve (notas, sale, entra, rotos): sale y entra van de cada nota a las notas que
+    enlaza o que la enlazan; rotos son (origen, texto) de wikilinks a notas que no existen."""
+    notas = notas_resumibles(rels)
+    en_mapa = set(notas)
+    sale = {r: set() for r in notas}
+    entra = {r: set() for r in notas}
+    rotos = []
+    layout = Layout(raiz, buscar_vault(raiz), rels)
+    layout.rels = notas  # recorrer solo las notas del mapa; el índice sigue completo
+    for e in recorrer_enlaces(raiz, layout):
+        if e["destino"] in en_mapa and e["destino"] != e["origen"]:
+            sale[e["origen"]].add(e["destino"])
+            entra[e["destino"]].add(e["origen"])
+        elif not e["destino"] and e["tipo"] == "wiki":
+            rotos.append((e["origen"], e["texto"]))
+    return notas, sale, entra, rotos
+
+
+def mas_conectadas(datos, n):
+    notas, sale, entra, _ = datos
+    grado = sorted(((len(sale[r] | entra[r]), r) for r in notas), key=lambda x: (-x[0], x[1]))
+    return [(r, g) for g, r in grado[:n] if g]
+
+
+# Donde rige la nota atómica; los entregables de 05_exports pueden quedar sueltos
+CARPETAS_ATOMICAS = ("01_knowledge", "02_decisions", "03_open_questions", "04_sources")
+
+
+def sueltas(datos):
+    """Notas atómicas sin ningún enlace (islas) y las que no enlazan a ninguna otra."""
+    notas, sale, entra, _ = datos
+    atomicas = [r for r in notas if r.split("/")[0] in CARPETAS_ATOMICAS]
+    islas = [r for r in atomicas if not sale[r] and not entra[r]]
+    sin_salida = [r for r in atomicas if not sale[r] and entra[r]]
+    return islas, sin_salida
+
+
+def lista_notas(rels, n=8):
+    return ", ".join("[[%s]]" % nombre_nota(r) for r in rels[:n]) + (" ..." if len(rels) > n else "")
+
+
+def cuantos(n, singular, plural):
+    return "%d %s" % (n, singular if n == 1 else plural)
+
+
+def linea_mapa(datos):
+    notas, sale, _, rotos = datos
+    if not notas:
+        return "Mapa: todavía no hay notas (nace con la primera)."
+    conexiones = len({tuple(sorted((a, b))) for a in sale for b in sale[a]})
+    islas, sin_salida = sueltas(datos)
+    linea = "Mapa: %s, %s" % (cuantos(len(notas), "nota", "notas"),
+                              cuantos(conexiones, "conexión", "conexiones"))
+    extra = [cuantos(len(x), s, p) for x, s, p in (
+        (islas, "isla", "islas"), (sin_salida, "sin enlaces de salida", "sin enlaces de salida"),
+        (rotos, "enlace roto", "enlaces rotos")) if x]
+    return linea + (" · " + ", ".join(extra) + " (revisa el jardín)" if extra else "")
+
+
+def resumen_de(raiz, rel, largo=140):
+    r = re.sub(r"\s+", " ", next((v for k, v in leer_fm(leer_texto(os.path.join(raiz, rel))[0] or "").items()
+                                  if k in CAMPOS_RESUMEN and v), ""))
+    return r if len(r) <= largo else r[:largo - 1] + "…"
+
+
+def con_resumen(raiz, rel):
+    r = resumen_de(raiz, rel)
+    return "[[%s]]%s" % (nombre_nota(rel), " · " + r if r else "")
+
+
+def buscar_nota(notas, nombre):
+    n = clave(nombre.strip().strip("[]").split("|")[0].rsplit("/", 1)[-1])
+    n = n[:-3] if n.endswith(".md") else n
+    exactas = [r for r in notas if clave(nombre_nota(r)) == n]
+    if exactas:
+        return exactas[0]
+    parecidas = [r for r in notas if n in clave(nombre_nota(r))]
+    print("No encuentro la nota «%s» en el mapa.%s" % (
+        nombre, " Parecidas: " + lista_notas(parecidas) if parecidas else ""))
+    sys.exit(1)
+
+
+def cmd_mapa(args):
+    raiz = os.path.abspath(args.raiz)
+    datos = mapa_de_enlaces(raiz, listar_archivos(raiz))
+    notas, sale, entra, rotos = datos
+    if args.nota:
+        r = buscar_nota(notas, args.nota)
+        print("%s (%s)" % (con_resumen(raiz, r), carpeta_de(r)))
+        for titulo, grupo in (("Enlaza a", sale[r]), ("La enlazan", entra[r])):
+            print("%s (%d):" % (titulo, len(grupo)))
+            for v in sorted(grupo):
+                print("  " + con_resumen(raiz, v))
+        return
+    if args.camino:
+        a, b = (buscar_nota(notas, x) for x in args.camino)
+        previa, cola = {a: None}, [a]
+        while cola and b not in previa:
+            actual = cola.pop(0)
+            for v in sorted(sale[actual] | entra[actual]):
+                if v not in previa:
+                    previa[v] = actual
+                    cola.append(v)
+        if b not in previa:
+            print("No hay camino: [[%s]] y [[%s]] no se conectan, ni a través de otras notas." % (
+                nombre_nota(a), nombre_nota(b)))
+            return
+        camino = [b]
+        while previa[camino[-1]]:
+            camino.append(previa[camino[-1]])
+        camino.reverse()
+        cadena = "[[%s]]" % nombre_nota(camino[0])
+        for x, y in zip(camino, camino[1:]):
+            cadena += (" → " if y in sale[x] else " ← ") + "[[%s]]" % nombre_nota(y)
+        print("Camino (%d pasos; la flecha va de la nota que enlaza a la enlazada): %s" % (
+            len(camino) - 1, cadena))
+        for x in camino:
+            print("  " + con_resumen(raiz, x))
+        return
+    print(linea_mapa(datos))
+    if not notas:
+        return
+    print("Lo más conectado: " + ", ".join(
+        "[[%s]] (%d)" % (nombre_nota(r), n) for r, n in mas_conectadas(datos, 10)))
+    islas, sin_salida = sueltas(datos)
+    if islas:
+        print("Islas, sin ningún enlace (%d): %s" % (len(islas), lista_notas(islas, 30)))
+    if sin_salida:
+        print("Sin enlaces de salida (%d): %s" % (len(sin_salida), lista_notas(sin_salida, 30)))
+    if rotos:
+        print("Enlaces rotos, a notas que no existen (%d):" % len(rotos))
+        for origen, texto in rotos[:30]:
+            print("  %s en [[%s]]" % (texto, nombre_nota(origen)))
+        if len(rotos) > 30:
+            print("  ... y %d más" % (len(rotos) - 30))
 
 
 # ---------------------------------------------- resúmenes, autor y bitácora
@@ -1479,7 +1639,7 @@ def revisar_migracion(raiz):
     """Cambios que se aplican con `migrar --aplicar` (clave, descripción)."""
     cambios = []
     claude_md = leer_texto(os.path.join(raiz, "CLAUDE.md"))[0] or ""
-    if version_tupla(version_del_proyecto(claude_md)) < version_tupla(VERSION):
+    if version_tupla(version_del_proyecto(claude_md)) < version_tupla(VERSION_PROYECTO):
         cambios.append(("version", "Anotar en CLAUDE.md que el proyecto usa brainme %s" % VERSION))
     s = seccion(claude_md, "graphify")
     if s and re.search(r"codebase|modifying code", claude_md[s[0]:s[1]], re.I):
@@ -1642,7 +1802,7 @@ def cmd_migrar(args):
 
 def estado_21(raiz, rels, texto_claude, configurado):
     """Líneas de estado que agregó brainme 2.1."""
-    if configurado and version_tupla(version_del_proyecto(texto_claude)) < version_tupla(VERSION):
+    if configurado and version_tupla(version_del_proyecto(texto_claude)) < version_tupla(VERSION_PROYECTO):
         print("Migración pendiente: el proyecto usa brainme %s y el skill es %s (references/migrar.md)." % (
             version_del_proyecto(texto_claude) or "2.0 o anterior", VERSION))
     sin = notas_sin_resumen(raiz, rels)
@@ -1682,6 +1842,9 @@ def main():
     sub = p.add_subparsers(dest="cmd")
     sub.add_parser("sincroniza")
     sub.add_parser("estado")
+    ma = sub.add_parser("mapa")
+    ma.add_argument("--nota", help="con qué notas se conecta, con su resumen")
+    ma.add_argument("--camino", nargs=2, metavar=("A", "B"), help="cómo se conectan dos notas")
     sub.add_parser("nombres")
     inv = sub.add_parser("inventario")
     inv.add_argument("--tabla", action="store_true", help="imprime lo por ordenar en formato compacto")
@@ -1716,7 +1879,7 @@ def main():
     ve.add_argument("--plan", help="ruta del plan para BRAIN mover")
     sub.add_parser("version")
     args = p.parse_args()
-    comandos = {"sincroniza": cmd_sincroniza, "estado": cmd_estado, "nombres": cmd_nombres, "inventario": cmd_inventario, "respaldo": cmd_respaldo, "mover": cmd_mover,
+    comandos = {"sincroniza": cmd_sincroniza, "estado": cmd_estado, "mapa": cmd_mapa, "nombres": cmd_nombres, "inventario": cmd_inventario, "respaldo": cmd_respaldo, "mover": cmd_mover,
                 "verificar": cmd_verificar, "deshacer": cmd_deshacer,
                 "a-wikilinks": cmd_a_wikilinks, "sin-resumen": cmd_sin_resumen,
                 "poner-resumenes": cmd_poner_resumenes, "autor": cmd_autor,

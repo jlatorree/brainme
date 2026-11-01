@@ -13,7 +13,7 @@ encontré evidencia sólida sobre...").
 
 **Terminado cuando:** cada fuente usada tiene su ficha, cada DOI respondió 302, cada
 afirmación del informe tiene doble cita, el informe está en `05_exports/reports/`
-y el grafo está sincronizado.
+y el proyecto está sincronizado.
 
 ## 1. Encargo
 
@@ -44,7 +44,7 @@ y el grafo está sincronizado.
    "no reportado". Fuentes web no académicas: `04_sources/web/sitio-tema.md` con
    `templates/web-source.md`. Si la ficha ya existía, se amplía.
 3. **PDFs:** si el usuario tiene el PDF de un paper, va junto a su ficha con el mismo
-   nombre base. Queda a mano para él y fuera del grafo, donde lo representa su ficha.
+   nombre base. Queda a mano para él y fuera del mapa, donde lo representa su ficha.
 4. **Informe** en `05_exports/reports/informe-<tema>-<AAAA-MM-DD>.md`: pregunta,
    resumen ejecutivo, hallazgos, evidencia en contra o debates, implicaciones para el
    proyecto (con wikilinks a decisiones y preguntas), límites de la revisión y lista de
@@ -56,7 +56,7 @@ y el grafo está sincronizado.
 5. **Conecta con el proyecto:** si la investigación responde una pregunta abierta,
    gradúala (flujo 4); si contradice una decisión vigente, créalo como pregunta abierta
    y avísale.
-6. **Sincroniza.** Las fichas y el informe son notas: entran al grafo sin lectura
+6. **Sincroniza.** Las fichas y el informe son notas: entran al mapa sin lectura
    profunda.
 7. **Entrega:** resumen en el chat (máximo 5 viñetas), ruta del informe y lista de
    fichas creadas.

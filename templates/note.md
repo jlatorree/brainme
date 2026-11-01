@@ -38,7 +38,7 @@ Qué situación, reunión o pregunta dio origen a esto. Una o dos frases.
 ## Contenido
 La idea en sí: lo que se aprendió, decidió o se pregunta. Sé concreto (datos,
 cifras, nombres). Enlaza conceptos y otras notas con [[wikilinks]]: eso alimenta
-el grafo.
+el mapa.
 
 - En una **pregunta**: formúlala en una frase y resume qué se sabe hoy.
 

@@ -13,7 +13,7 @@ con ruta (`[[carpeta/nota]]`), los links relativos (`[texto](../nota.md)`) y los
 canvas; `BRAIN mover` los corrige todos: re-resuelve cada enlace como Obsidian
 (también si el vault está por encima del proyecto), deja por nombre los que pueden ir
 por nombre, respeta los bloques de código y los saltos de línea. Lo que genera queda
-en `.brainme/`, fuera del grafo.
+en `.brainme/`, fuera del mapa.
 
 1. **Inventario:** `BRAIN inventario --tabla`. Imprime un resumen y una línea compacta
    por archivo por ordenar: ruta, tipo, título, palabras, cuántas notas lo usan y una
@@ -26,7 +26,7 @@ en `.brainme/`, fuera del grafo.
    |---|---|
    | Nota clara de un solo tipo (una idea, una decisión o una pregunta) | `01_knowledge/`, `02_decisions/` o `03_open_questions/`, con `tipo` (y `estado` si aplica) |
    | Notas de reunión, notas largas con varias ideas, borradores, apuntes | `00_inbox/` (después se procesan con el flujo 2) |
-   | Resumen de un paper o PDF académico | `04_sources/literature/` (a un PDF sin ficha, ofrécele crearla: la ficha es lo que entra al grafo) |
+   | Resumen de un paper o PDF académico | `04_sources/literature/` (a un PDF sin ficha, ofrécele crearla: la ficha es lo que entra al mapa) |
    | Recorte o ficha de una página web | `04_sources/web/` |
    | Informe, documento de trabajo o entregable (también versiones finales ya enviadas) | `05_exports/<reports, diagrams, data o presentations>/` |
    | Canvas de Obsidian (`.canvas`) | `05_exports/diagrams/` |
@@ -65,13 +65,13 @@ en `.brainme/`, fuera del grafo.
    terminar borra las carpetas que quedaron vacías y deja un registro en
    `.brainme/registros/`.
 6. **Wikilinks:** `BRAIN a-wikilinks` convierte los links markdown internos entre notas
-   en wikilinks. En Obsidian funcionan igual, y Graphify solo lee los wikilinks
-   cuando el nombre del archivo tiene espacios.
+   en wikilinks. En Obsidian funcionan igual, y un wikilink no se rompe cuando
+   la nota cambia de carpeta.
 7. **Verifica** con la línea "Enlaces rotos" de `mover` (los rotos previos suelen ser
    notas que el usuario aún no creó; se dejan como están) y resuelve los nombres
    repetidos que reporte. `BRAIN verificar` repite el chequeo cuando quieras.
-8. **Grafo:** sincroniza. Si es la primera vez y hay PDFs, imágenes u Office, ofrece
-   la lectura profunda diciendo cuántos archivos son.
+8. **Sincroniza.** Si es la primera vez y hay PDFs, imágenes u Office, ofrece la
+   lectura profunda (o Graphify, si el proyecto no lo usa) diciendo cuántos archivos son.
 9. **Cuéntale en simple:** cuántos archivos ordenó y dónde, cuántos enlaces corrigió,
    qué quedó en `00_inbox/` para procesar y qué dejó sin tocar. Ofrece procesar el
    inbox (flujo 2), por tandas si son muchos.
