@@ -13,7 +13,7 @@ graphify 0.9.65.
 | Tras reorganizar carpetas, el grafo tiene menos notas | `graphify update . --force`. |
 | `graphify path` dice que no hay camino | Repite con `--undirected`. |
 | Aviso "skill is from graphify X, package is Y" | `uv tool upgrade graphifyy` y luego `graphify install`. |
-| Aparecen avisos "MANDATORY" en cada lectura de nota | Alguien volvió a correr `graphify claude install`: repite el paso 6 de `references/configurar.md` (quita el aviso de lectura). |
+| Aparecen avisos "MANDATORY" en cada búsqueda o lectura de nota | Alguien corrió `graphify claude install`: `BRAIN migrar --aplicar` quita los avisos y la sección `## graphify` para código. |
 | El grafo se ve incoherente | Reconstrucción completa: invoca el skill `graphify` con `.` (usa la IA de la sesión). |
 
 Datos que conviene saber:

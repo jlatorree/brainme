@@ -26,7 +26,8 @@ El conocimiento vive en las **conexiones**, no en los documentos.
 2. **Tú no programas:** brainme corre todo y te explica qué hizo.
 3. **Toda afirmación con su fuente:** doble cita, el link real y la ficha en el grafo.
 4. **Nada se pierde:** se mueve, no se borra; todo orden tiene respaldo y se deshace.
-5. **Barato por diseño:** ponerse al día es un comando; la lectura cara, solo si hace falta.
+5. **Barato por diseño:** cada nota tiene un resumen, lo pesado lo hacen ayudantes con el
+   modelo justo y, cuando la sesión se llena, un handoff sigue en una sesión nueva.
 
 ## Cómo se usa
 
@@ -42,6 +43,9 @@ Abre Claude Code en la carpeta del proyecto, escribe **brainme** y habla normal:
 | "haz un informe de..." | lo arma o lo ubica en exports, con su ficha |
 | "ordena esta carpeta" | reparte archivos sueltos sin romper enlaces |
 | "añadí notas nuevas" | pone el grafo al día |
+| "ayúdame con un handoff" o `/brainme:handoff` | guarda lo pendiente y sigue en una sesión nueva |
+
+Al terminar cada tarea, brainme anota en `bitacora.md` qué hizo, quién y qué sigue.
 
 Según la carpeta, brainme **configura** (vacía), **ordena** (con avance previo, con un
 solo OK y reversible) o te **pone al día** (ya usa brainme).
@@ -85,8 +89,12 @@ Activa el **auto-update** una vez: `/plugin` → **Marketplaces** → **brainme*
 04_sources/               literature/ (fichas de papers + PDFs) y web/
 05_exports/               entregables: reports/, diagrams/, data/, presentations/
 CLAUDE.md                 hace que cada sesión arranque con brainme
+bitacora.md               qué se hizo en cada sesión, quién y qué sigue
+_taller/                  generadores de entregables (fuera de búsquedas y del grafo)
 .brainme/                respaldos, inbox procesado y registros (oculto)
 ```
+
+Las versiones anteriores de un entregable pasan a `_versiones/`, dentro de su carpeta.
 
 - **Nota** (`01`–`03`): lo que *sabes*. Viva, se amplía.
 - **Fuente** (`04`): lo que *leíste*, con su cita y hallazgos.
@@ -102,5 +110,8 @@ solo cuando hace falta, y el inbox y los PDFs de papers quedan fuera del grafo.
 | `SKILL.md` | El skill: vocabulario, estructura y flujos. |
 | `references/` | Configurar, ordenar, investigar, entregables y problemas con Graphify. |
 | `templates/` | Nota, ficha de paper, web y entregable, `CLAUDE.md` y `.graphifyignore`. |
-| `scripts/brainme.py` | Estado, índice y orden sin romper enlaces. Python 3, sin dependencias. |
+| `scripts/brainme.py` | Estado, índice, orden sin romper enlaces, bitácora, migración y consumo. Python 3, sin dependencias. |
+| `agents/` | Ayudantes con modelo fijo: resúmenes (Haiku), documentos largos (Sonnet) e investigación (Opus en esfuerzo xhigh). |
+| `commands/handoff.md` | El comando `/brainme:handoff`. |
+| `tests/` | Pruebas del script, sin gastar tokens: `python3 -m unittest discover tests`. |
 | `.claude-plugin/` | Manifiestos del plugin y del marketplace. |

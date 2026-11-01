@@ -1,5 +1,8 @@
 # Deep research de literatura
 
+La sigue el ayudante `brainme:investigador` (Opus, esfuerzo xhigh). Si lanzas subagentes
+para buscar o leer, pídeles el mismo modelo y esfuerzo.
+
 La investigación y la lectura de papers las hace Claude Code con su deep research, como
 siempre. Brainme le da el encargo y después almacena y procesa el resultado: fichas,
 informe con doble cita y conexiones con el proyecto.

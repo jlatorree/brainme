@@ -21,6 +21,7 @@ leido: <completo | solo abstract>
 retracciones: <ninguna | corregido | retractado>
 fiabilidad: <alta | media | baja>
 proyecto: "<nombre del proyecto>"
+resumen: "<qué sostiene el paper, en una o dos frases>"
 tags: [literatura, <tema>]
 relacionadas: ["[[pregunta-o-decision-que-ilumina]]", "[[informe-que-lo-cita]]"]
 ---

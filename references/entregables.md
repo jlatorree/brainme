@@ -42,6 +42,12 @@ excel), usa el skill que corresponda y guarda aquí el resultado.
   PDF) en la misma carpeta.
 - **Versiones:** cada versión entregada se conserva. Una versión nueva es un archivo
   nuevo (`-v2`) y una fila más en el historial de la ficha. La que se envía es la
-  misma de `05_exports/`: no hay copias aparte; en la ficha, `estado: final`.
+  misma de `05_exports/`: no hay copias aparte; en la ficha, `estado: final`. Al crear
+  la versión nueva, la anterior y su ficha pasan a `_versiones/` dentro de la misma
+  carpeta (`BRAIN versiones --plan .brainme/plan-versiones.json` y `BRAIN mover --plan
+  .brainme/plan-versiones.json`): así las búsquedas y el grafo ven solo la vigente.
+- **Generadores:** los scripts o pipelines que producen un entregable van a `_taller/`
+  en la raíz del proyecto, con un nombre que diga qué generan. Quedan fuera de las
+  búsquedas y del grafo.
 - Al terminar: sincroniza. Si hay imágenes, PDFs u Office nuevos y el usuario quiere
   que el grafo lea su contenido, lectura profunda.

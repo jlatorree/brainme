@@ -4,9 +4,9 @@ Se sigue cuando la carpeta actual no tiene `CLAUDE.md` con la sección `## brain
 Todo lo haces tú; pides permiso solo donde se indica.
 
 **Terminado cuando:** existen las carpetas de la estructura, `.graphifyignore`, y
-`CLAUDE.md` con las secciones `## brainme` y `## graphify`; `BRAIN inventario` marca
-0 archivos por ordenar (o solo los que el usuario decidió dejar); y el usuario recibió
-el mensaje final.
+`CLAUDE.md` con la sección `## brainme`; `BRAIN autor` tiene nombre; `BRAIN inventario`
+marca 0 archivos por ordenar (o solo los que el usuario decidió dejar); y el usuario
+recibió el mensaje final.
 
 1. **Carpeta.** El proyecto es la carpeta donde se abrió Claude Code (`pwd`). Si es la
    carpeta personal (`~`), el Escritorio, Documentos a secas o una carpeta del
@@ -38,22 +38,11 @@ el mensaje final.
 5. **`CLAUDE.md`:** créalo desde `templates/CLAUDE.md` (nombre del proyecto = nombre de
    la carpeta; fecha de hoy). Si ya existe, agrega al final la sección `## brainme`
    de la plantilla y conserva todo lo demás.
-6. **Graphify en cada sesión:** `graphify claude install`. Agrega la sección
-   `## graphify` a `CLAUDE.md` y avisos automáticos en `.claude/settings.json`;
-   repetirlo es seguro. Después quita el aviso que se dispara en cada lectura de
-   archivo: en un vault de notas cuesta ~100 tokens por lectura y empuja a consultar
-   el grafo antes de abrir notas que ya sabes que necesitas. El aviso de búsquedas
-   (`grep`, `find`) se queda, porque ahí sí ahorra:
-
-   ```bash
-   python3 - <<'EOF'
-   import json
-   p = ".claude/settings.json"
-   d = json.load(open(p))
-   d["hooks"]["PreToolUse"] = [h for h in d["hooks"]["PreToolUse"] if h.get("matcher") != "Read|Glob"]
-   json.dump(d, open(p, "w"), indent=2)
-   EOF
-   ```
+6. **Autor:** `BRAIN autor`. Si dice "no definido", pregúntale al usuario cómo quiere
+   firmar (por ejemplo, "Jonathan L.") y corre `BRAIN autor "Nombre"`. Se guarda en
+   este computador, no en la carpeta: en una carpeta compartida, cada persona firma con
+   su nombre. No corras `graphify claude install`: agrega avisos pensados para código
+   que gastan tokens en cada búsqueda, y brainme ya mantiene el grafo.
 7. **Avance previo:** `BRAIN inventario`. Si hay archivos por ordenar, sigue
    `references/ordenar.md` ahora.
 8. **Grafo:** sincroniza. En una carpeta nueva responde "nothing to rebuild", y es
@@ -64,7 +53,7 @@ el mensaje final.
    ```
    Listo, este proyecto ya funciona con brainme:
    - Creé las carpetas: inbox, conocimiento, decisiones, preguntas, fuentes y exports.
-   - Creé CLAUDE.md: cada sesión nueva en esta carpeta arrancará usando brainme y el grafo.
+   - Creé CLAUDE.md: cada sesión nueva en esta carpeta arrancará usando brainme.
    - El grafo se crea con la primera nota y lo mantendré al día mientras trabajamos.
    Para empezar, deja apuntes o notas de reunión en 00_inbox y dime "procesa el inbox".
    ```

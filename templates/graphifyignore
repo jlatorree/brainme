@@ -35,3 +35,8 @@ docs/
 #    ficha .md y su PDF exportado, que viven en la misma carpeta.
 *.key
 *.pptx
+
+# 8. Bitácora, versiones viejas de entregables y generadores (brainme 2.1)
+bitacora.md
+**/_versiones/
+_taller/

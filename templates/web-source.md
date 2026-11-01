@@ -11,6 +11,7 @@ publicado: <AAAA-MM-DD o desconocido>
 consultado: <AAAA-MM-DD>
 fiabilidad: <alta | media | baja>
 proyecto: "<nombre del proyecto>"
+resumen: "<qué aporta la fuente, en una o dos frases>"
 tags: [fuente, <tema>]
 relacionadas: ["[[nota-o-informe-que-la-usa]]"]
 ---

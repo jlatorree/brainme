@@ -11,6 +11,13 @@ Subcomandos (se corren desde la raíz del proyecto):
   verificar    reporta enlaces rotos y nombres repetidos
   deshacer     revierte el último orden (o el registro indicado)
   a-wikilinks  convierte links markdown internos entre notas en wikilinks
+  sin-resumen  notas sin resumen, en lotes para el ayudante de resúmenes
+  poner-resumenes  escribe en el frontmatter los resúmenes de un archivo JSON
+  autor        nombre de quien trabaja en este computador (para firmar notas y bitácora)
+  bitacora     agrega o muestra entradas de bitacora.md (incluidos los handoffs)
+  consumo      tokens de contexto por respuesta, leídos de los registros de Claude Code
+  migrar       revisa y aplica lo que le falta a un proyecto de una versión anterior
+  versiones    plan para llevar versiones viejas de entregables a _versiones/
 
 Solo usa la biblioteca estándar de Python (3.9 o superior).
 """
@@ -27,6 +34,8 @@ import unicodedata
 import zipfile
 from urllib.parse import unquote
 
+VERSION = "2.1.0"
+
 ESTRUCTURA = [
     "00_inbox", "01_knowledge", "02_decisions", "03_open_questions/archive",
     "04_sources/literature", "04_sources/web", "05_exports/reports",
@@ -38,8 +47,11 @@ RAICES_ESTRUCTURA = {"00_inbox", "01_knowledge", "02_decisions", "03_open_questi
 PROTEGIDAS = {".git", ".obsidian", ".trash", ".claude", ".brainme", "graphify-out",
               "node_modules", ".claude-plugin"}
 # Se quedan donde están (no son "por ordenar")
-SE_QUEDAN_RAIZ = {"claude.md", "readme.md", "agents.md", ".graphifyignore", ".gitignore"}
-CARPETAS_QUE_SE_QUEDAN = {"docs"}
+SE_QUEDAN_RAIZ = {"claude.md", "readme.md", "agents.md", ".graphifyignore", ".gitignore",
+                  "bitacora.md"}
+CARPETAS_QUE_SE_QUEDAN = {"docs", "_taller"}
+# Versiones viejas de entregables y generadores: fuera del índice, las búsquedas y el grafo
+APARTE = {"_versiones", "_taller"}
 IGNORAR_ARCHIVOS = {".ds_store", "icon\r"}
 
 CATEGORIAS = {
@@ -908,6 +920,16 @@ def cmd_sincroniza(args):
     borradas = limpiar_respaldos_grafo(raiz)
     if borradas:
         print("Respaldos viejos del grafo borrados: %s (queda el último)." % ", ".join(borradas))
+    # Copias en conflicto de iCloud ("graph 2.json"): Graphify regenera el original
+    out = os.path.join(raiz, "graphify-out")
+    copias = [n for n in os.listdir(out) if RE_COPIA_CONFLICTO.match(n)] if os.path.isdir(out) else []
+    for n in copias:
+        try:
+            os.remove(os.path.join(out, n))
+        except OSError:
+            pass
+    if copias:
+        print("Copias en conflicto del grafo borradas: %s." % ", ".join(copias))
 
 
 NOMBRES_CAT = {"pdf": "PDFs", "imagen": "imágenes", "office": "archivos de Office",
@@ -963,6 +985,7 @@ def cmd_estado(args):
     movidas = [r for r in rels if r.endswith(".md") and estado_de(r) == "ordenado"
                and not r.startswith("00_inbox/") and os.path.getmtime(os.path.join(raiz, r)) > hace7]
     print("Notas creadas o editadas en los últimos 7 días: %d" % len(movidas))
+    estado_21(raiz, rels, texto_claude, configurado)
 
     if not os.path.exists(os.path.join(raiz, "graphify-out", "graph.json")):
         print("Grafo: todavía no existe (nace con la primera nota al sincronizar).")
@@ -999,7 +1022,8 @@ def cmd_nombres(args):
     raiz = os.path.abspath(args.raiz)
     grupos = {}
     for r in listar_archivos(raiz):
-        if r.endswith(".md") and estado_de(r) == "ordenado" and not r.startswith("00_inbox/"):
+        if r.endswith(".md") and estado_de(r) == "ordenado" and not r.startswith("00_inbox/") \
+                and not aparte(r):
             grupos.setdefault(carpeta_de(r), []).append(r.rsplit("/", 1)[-1][:-3])
     for carpeta in sorted(grupos):
         print("%s (%d): %s" % (carpeta, len(grupos[carpeta]), " · ".join(sorted(grupos[carpeta]))))
@@ -1078,6 +1102,580 @@ def cmd_verificar(args):
             json.dump({"rotos": rotos, "repetidos": repetidos}, f, ensure_ascii=False, indent=1)
 
 
+# ---------------------------------------------- resúmenes, autor y bitácora
+
+RE_COPIA_CONFLICTO = re.compile(r"^.+ \d+\.[A-Za-z0-9]+$")
+RE_VERSION_ARCHIVO = re.compile(r"^(?P<base>.+?)-v(?P<n>\d+)(?P<resto>-[^.]*)?\.(?P<ext>[^.]+)$")
+CAMPOS_RESUMEN = ("resumen", "description", "summary")
+PALABRAS_NOTA_LARGA = 1000
+TAMANO_LOTE = 25
+
+
+def aparte(rel):
+    return any(p in APARTE for p in rel.split("/")[:-1])
+
+
+def notas_resumibles(rels):
+    """Notas de la estructura que deberían tener resumen (sin inbox ni carpetas aparte)."""
+    return [r for r in rels if r.endswith(".md") and estado_de(r) == "ordenado"
+            and not r.startswith("00_inbox/") and not aparte(r)
+            and not RE_COPIA_CONFLICTO.match(r.rsplit("/", 1)[-1])]
+
+
+def tiene_resumen(fm):
+    return any((fm.get(k) or "").strip() for k in CAMPOS_RESUMEN)
+
+
+def enlaces_entrantes(textos):
+    """Cuántas notas enlazan a cada nombre (en minúsculas)."""
+    cuenta = {}
+    for texto in textos:
+        for m in RE_WIKI.finditer(texto or ""):
+            nombre = m.group(2).split("|")[0].split("#")[0].strip().rsplit("/", 1)[-1]
+            if nombre.lower().endswith(".md"):
+                nombre = nombre[:-3]
+            cuenta[clave(nombre)] = cuenta.get(clave(nombre), 0) + 1
+    return cuenta
+
+
+def notas_sin_resumen(raiz, rels):
+    """Notas sin resumen, primero las más enlazadas y después las más recientes."""
+    textos, faltan = {}, []
+    for r in notas_resumibles(rels):
+        textos[r] = leer_texto(os.path.join(raiz, r))[0] or ""
+        if not tiene_resumen(leer_fm(textos[r])):
+            faltan.append(r)
+    entrantes = enlaces_entrantes(textos.values())
+    faltan.sort(key=lambda r: (-entrantes.get(clave(r.rsplit("/", 1)[-1][:-3]), 0),
+                               -os.path.getmtime(os.path.join(raiz, r))))
+    return faltan
+
+
+def cmd_sin_resumen(args):
+    raiz = os.path.abspath(args.raiz)
+    faltan = notas_sin_resumen(raiz, listar_archivos(raiz))
+    if not faltan:
+        print("Todas las notas tienen resumen.")
+        return
+    if not args.lotes:
+        print("Notas sin resumen: %d (primero las más enlazadas)" % len(faltan))
+        for r in faltan[:10]:
+            print("  " + r)
+        if len(faltan) > 10:
+            print("  ... y %d más" % (len(faltan) - 10))
+        return
+    carpeta = os.path.join(raiz, ".brainme", "resumenes")
+    os.makedirs(carpeta, exist_ok=True)
+    for n in os.listdir(carpeta):
+        if n.startswith("lote-") and n.endswith(".json"):
+            os.remove(os.path.join(carpeta, n))
+    lotes = [faltan[i:i + args.lotes] for i in range(0, len(faltan), args.lotes)]
+    rutas = []
+    for i, lote in enumerate(lotes, 1):
+        ruta = os.path.join(carpeta, "lote-%02d.json" % i)
+        with open(ruta, "w", encoding="utf-8") as f:
+            json.dump(lote, f, ensure_ascii=False, indent=1)
+        rutas.append(os.path.relpath(ruta, raiz))
+    print("Notas sin resumen: %d, en %d lotes de hasta %d:" % (len(faltan), len(lotes), args.lotes))
+    for r in rutas:
+        print("  " + r)
+
+
+def cmd_poner_resumenes(args):
+    """Agrega `resumen:` al frontmatter. No toca el texto de la nota ni un resumen que ya exista."""
+    raiz = os.path.abspath(args.raiz)
+    with open(os.path.join(raiz, args.desde) if not os.path.isabs(args.desde) else args.desde,
+              encoding="utf-8") as f:
+        resumenes = json.load(f)
+    escritos, ya, faltan, largos = 0, 0, [], 0
+    for rel, resumen in resumenes.items():
+        rel = nfc(rel).strip("/")
+        ruta = os.path.join(raiz, rel)
+        resumen = " ".join(str(resumen).split())
+        if not resumen or not rel.endswith(".md") or not os.path.isfile(ruta):
+            faltan.append(rel)
+            continue
+        texto, crlf = leer_texto(ruta)
+        if texto is None:
+            faltan.append(rel)
+            continue
+        if tiene_resumen(leer_fm(texto)):
+            ya += 1
+            continue
+        largos += len(resumen) > 300
+        escribir_texto(ruta, fusionar_frontmatter(texto, {"resumen": resumen}, []), crlf)
+        escritos += 1
+    print("Resúmenes escritos: %d · ya tenían: %d · no encontrados: %d" % (escritos, ya, len(faltan)))
+    if faltan:
+        print("  No encontrados: " + ", ".join(faltan[:10]))
+    if largos:
+        print("  %d resúmenes pasan de 300 caracteres: conviene acortarlos." % largos)
+
+
+def ruta_config():
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
+    return os.path.join(base, "brainme", "config.json")
+
+
+def leer_config():
+    try:
+        with open(ruta_config(), encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def cmd_autor(args):
+    """El autor vive en la configuración personal del computador, no en la carpeta
+    compartida: cada socio firma con su nombre."""
+    cfg = leer_config()
+    if args.nombre:
+        cfg["autor"] = " ".join(args.nombre.split())
+        os.makedirs(os.path.dirname(ruta_config()), exist_ok=True)
+        with open(ruta_config(), "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=1)
+        print("Autor guardado en este computador: %s" % cfg["autor"])
+    elif cfg.get("autor"):
+        print("Autor: %s" % cfg["autor"])
+    else:
+        print('Autor: no definido. Pregúntale su nombre al usuario y corre: BRAIN autor "Nombre"')
+
+
+BITACORA = "bitacora.md"
+CABECERA_BITACORA = ("# Bitácora\n\nQué se hizo en cada sesión, quién lo hizo y qué sigue. "
+                     "La escribe brainme; lo más reciente va al final.\n")
+RE_ENTRADA = re.compile(r"^- (\d{2}:\d{2}) · (.+)$")
+RE_HANDOFF = re.compile(r"^### (\d{2}:\d{2}) · Handoff · (.+)$")
+RE_DIA = re.compile(r"^## (\d{4}-\d{2}-\d{2})\s*$")
+
+
+def entradas_bitacora(texto):
+    """Lista de entradas: {fecha, hora, tipo, linea, bloque}."""
+    entradas, fecha, actual = [], "", None
+    for linea in (texto or "").split("\n"):
+        m_dia, m_ent, m_hand = RE_DIA.match(linea), RE_ENTRADA.match(linea), RE_HANDOFF.match(linea)
+        if m_dia or m_ent or m_hand:
+            actual = None
+        if m_dia:
+            fecha = m_dia.group(1)
+        elif m_ent:
+            entradas.append({"fecha": fecha, "hora": m_ent.group(1), "tipo": "entrada",
+                             "linea": m_ent.group(2), "bloque": [linea]})
+        elif m_hand:
+            actual = {"fecha": fecha, "hora": m_hand.group(1), "tipo": "handoff",
+                      "linea": "Handoff · " + m_hand.group(2), "bloque": [linea]}
+            entradas.append(actual)
+        elif actual is not None:
+            actual["bloque"].append(linea)
+    return entradas
+
+
+def cmd_bitacora(args):
+    raiz = os.path.abspath(args.raiz)
+    ruta = os.path.join(raiz, BITACORA)
+    texto = leer_texto(ruta)[0] or ""
+    entradas = entradas_bitacora(texto)
+    if args.ultimas:
+        if not entradas:
+            print("Bitácora: sin entradas todavía.")
+        for e in entradas[-args.ultimas:]:
+            print("%s %s · %s" % (e["fecha"], e["hora"], e["linea"]))
+        return
+    if args.handoff_ultimo:
+        handoffs = [e for e in entradas if e["tipo"] == "handoff"]
+        if not handoffs:
+            print("No hay handoffs en la bitácora.")
+            sys.exit(1)
+        e = handoffs[-1]
+        print("Handoff del %s %s\n" % (e["fecha"], e["hora"]) + "\n".join(e["bloque"][1:]).strip())
+        return
+    autor = leer_config().get("autor")
+    if not autor:
+        print('Falta el autor: pregúntale su nombre al usuario y corre BRAIN autor "Nombre".')
+        sys.exit(2)
+    if not args.texto and not args.handoff:
+        print('Uso: BRAIN bitacora "qué se hizo" [--sigue "qué sigue"] | --handoff archivo | --ultimas N')
+        sys.exit(1)
+    momento = datetime.datetime.now()
+    hoy, hora = momento.strftime("%Y-%m-%d"), momento.strftime("%H:%M")
+    nuevo = texto if texto.strip() else CABECERA_BITACORA
+    dias = [m.group(1) for m in map(RE_DIA.match, nuevo.split("\n")) if m]
+    if not dias or dias[-1] != hoy:
+        nuevo = nuevo.rstrip("\n") + "\n\n## %s\n" % hoy
+    if args.handoff:
+        with open(os.path.join(raiz, args.handoff), encoding="utf-8") as f:
+            cuerpo = f.read().strip()
+        nuevo = nuevo.rstrip("\n") + "\n\n### %s · Handoff · %s\n\n%s\n" % (hora, autor, cuerpo)
+        print("Handoff guardado en %s: %s %s" % (BITACORA, hoy, hora))
+    else:
+        linea = " ".join(args.texto.split())
+        if args.sigue:
+            linea += " **Sigue:** " + " ".join(args.sigue.split())
+        # Las entradas seguidas van juntas; después de un título o un handoff, una línea en blanco
+        ultima = nuevo.rstrip("\n").split("\n")[-1]
+        nuevo = nuevo.rstrip("\n") + ("\n" if RE_ENTRADA.match(ultima) else "\n\n")
+        nuevo += "- %s · %s · %s\n" % (hora, autor, linea)
+        print("Bitácora: %s %s · %s" % (hoy, hora, linea))
+    escribir_texto(ruta, nuevo, False)
+
+
+# --------------------------------------------------------------- consumo
+
+def codificar_ruta(ruta):
+    """Nombre de carpeta que Claude Code usa en ~/.claude/projects para una ruta."""
+    salida = []
+    for ch in ruta:
+        if ch.isascii() and ch.isalnum():
+            salida.append(ch)
+        else:
+            salida.append("--" if ord(ch) > 0xFFFF else "-")
+    return "".join(salida)
+
+
+def carpetas_de_registros(raiz):
+    base = os.path.join(os.environ.get("CLAUDE_CONFIG_DIR") or
+                        os.path.join(os.path.expanduser("~"), ".claude"), "projects")
+    rutas = {os.path.abspath(raiz), os.path.realpath(raiz)}
+    encontradas = []
+    for r in rutas:
+        for forma in ("NFC", "NFD"):
+            d = os.path.join(base, codificar_ruta(unicodedata.normalize(forma, r)))
+            if os.path.isdir(d) and d not in encontradas:
+                encontradas.append(d)
+    if encontradas or not os.path.isdir(base):
+        return encontradas
+    claves = {nfc(r) for r in rutas}
+    for n in os.listdir(base):
+        d = os.path.join(base, n)
+        for a in (x for x in os.listdir(d) if x.endswith(".jsonl")) if os.path.isdir(d) else []:
+            try:
+                with open(os.path.join(d, a), encoding="utf-8") as f:
+                    for _, linea in zip(range(20), f):
+                        cwd = json.loads(linea).get("cwd")
+                        if cwd:
+                            if nfc(cwd) in claves:
+                                encontradas.append(d)
+                            break
+            except (OSError, ValueError):
+                pass
+            break
+    return encontradas
+
+
+def contextos_de(ruta, desde):
+    """Tokens de contexto de cada respuesta de Claude en un registro (sin repetir mensajes)."""
+    vistos, ctxs, fechas = set(), [], []
+    try:
+        f = open(ruta, encoding="utf-8")
+    except OSError:
+        return ctxs, fechas
+    with f:
+        for linea in f:
+            try:
+                e = json.loads(linea)
+            except ValueError:
+                continue
+            if e.get("type") != "assistant":
+                continue
+            m = e.get("message") or {}
+            u = m.get("usage") or {}
+            mid = m.get("id") or e.get("requestId") or e.get("uuid")
+            if not u or mid in vistos:
+                continue
+            vistos.add(mid)
+            fecha = (e.get("timestamp") or "")[:10]
+            if desde and fecha and fecha < desde:
+                continue
+            ctx = sum(u.get(k) or 0 for k in
+                      ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
+            if ctx > 0:
+                ctxs.append(ctx)
+                fechas.append(fecha)
+    return ctxs, fechas
+
+
+def miles(n):
+    return format(int(round(n)), ",").replace(",", ".")
+
+
+def cmd_consumo(args):
+    raiz = os.path.abspath(args.raiz)
+    carpetas = carpetas_de_registros(raiz)
+    if not carpetas:
+        print("No encontré registros de Claude Code para esta carpeta.")
+        return
+    sesiones, ayudantes = [], []
+    for c in carpetas:
+        for d, _, archivos in os.walk(c):
+            for a in archivos:
+                if not a.endswith(".jsonl"):
+                    continue
+                ctxs, fechas = contextos_de(os.path.join(d, a), args.desde)
+                if ctxs:
+                    (sesiones if d == c else ayudantes).append((min(fechas), ctxs))
+    todos = sorted(x for _, cs in sesiones for x in cs)
+    if not todos:
+        print("No hay respuestas registradas%s." % (" desde " + args.desde if args.desde else ""))
+        return
+    fechas = sorted(f for f, _ in sesiones)
+    p90 = todos[int(len(todos) * 0.9) - 1 if len(todos) >= 10 else -1]
+    print("Consumo de Claude Code en %s: %d sesiones, %d respuestas (%s a %s)." % (
+        os.path.basename(raiz), len(sesiones), len(todos), fechas[0], fechas[-1]))
+    print("Contexto por respuesta: promedio %s · mediana %s · el 10%% más pesado sobre %s · máximo %s." % (
+        miles(sum(todos) / len(todos)), miles(todos[len(todos) // 2]), miles(p90), miles(todos[-1])))
+    print("Total releído: %s millones de tokens." % ("%.1f" % (sum(todos) / 1e6)).replace(".", ","))
+    if ayudantes:
+        ctx_ay = [x for _, cs in ayudantes for x in cs]
+        print("Ayudantes (subagentes): %d respuestas, promedio %s por respuesta." % (
+            len(ctx_ay), miles(sum(ctx_ay) / len(ctx_ay))))
+    print("Meta de brainme 2.1: menos de 150.000 por respuesta, en promedio.")
+    print("Últimas sesiones (fecha · respuestas · promedio · máximo):")
+    for fecha, cs in sorted(sesiones)[-args.sesiones:]:
+        print("  %s · %d · %s · %s" % (fecha, len(cs), miles(sum(cs) / len(cs)), miles(max(cs))))
+
+
+# --------------------------------------------------------------- migrar
+
+LINEAS_IGNORE = ["bitacora.md", "**/_versiones/", "_taller/"]
+
+
+def version_del_proyecto(texto):
+    m = re.search(r"\*\*Versi[oó]n:\*\*\s*([\d.]+)", texto or "")
+    return m.group(1) if m else None
+
+
+def version_tupla(v):
+    try:
+        return tuple(int(x) for x in v.split("."))
+    except (AttributeError, ValueError):
+        return (2, 0, 0)
+
+
+def seccion(texto, titulo):
+    """(inicio, fin) de una sección '## titulo' hasta la siguiente '## ' o el final."""
+    m = re.search(r"^## %s\s*$" % re.escape(titulo), texto or "", re.M)
+    if not m:
+        return None
+    sig = re.search(r"^## ", texto[m.end():], re.M)
+    return m.start(), (m.end() + sig.start()) if sig else len(texto)
+
+
+def hooks_graphify(datos):
+    """Copia de los hooks sin los avisos de Graphify, y cuántos quitó."""
+    quitados, nuevos = 0, {}
+    for evento, grupos in (datos.get("hooks") or {}).items():
+        quedan = []
+        for g in grupos:
+            if any("graphify" in (h.get("command") or "") for h in g.get("hooks", [])):
+                quitados += 1
+            else:
+                quedan.append(g)
+        if quedan:
+            nuevos[evento] = quedan
+    return nuevos, quitados
+
+
+def revisar_migracion(raiz):
+    """Cambios que se aplican con `migrar --aplicar` (clave, descripción)."""
+    cambios = []
+    claude_md = leer_texto(os.path.join(raiz, "CLAUDE.md"))[0] or ""
+    if version_tupla(version_del_proyecto(claude_md)) < version_tupla(VERSION):
+        cambios.append(("version", "Anotar en CLAUDE.md que el proyecto usa brainme %s" % VERSION))
+    s = seccion(claude_md, "graphify")
+    if s and re.search(r"codebase|modifying code", claude_md[s[0]:s[1]], re.I):
+        cambios.append(("seccion_graphify", "Quitar de CLAUDE.md la sección ## graphify pensada para código"))
+    ajustes = os.path.join(raiz, ".claude", "settings.json")
+    try:
+        with open(ajustes, encoding="utf-8") as f:
+            if hooks_graphify(json.load(f))[1]:
+                cambios.append(("aviso_graphify",
+                                "Quitar el aviso de Graphify que aparece en cada búsqueda (.claude/settings.json)"))
+    except (OSError, ValueError):
+        pass
+    if not os.path.exists(os.path.join(raiz, BITACORA)):
+        cambios.append(("bitacora", "Crear %s" % BITACORA))
+    ignore = leer_texto(os.path.join(raiz, ".graphifyignore"))[0]
+    if ignore is not None:
+        faltan = [l for l in LINEAS_IGNORE if l not in ignore.split("\n")]
+        if faltan:
+            cambios.append(("graphifyignore", "Agregar a .graphifyignore: " + ", ".join(faltan)))
+    return cambios
+
+
+def aplicar_cambio(raiz, clave_cambio):
+    ruta_claude = os.path.join(raiz, "CLAUDE.md")
+    if clave_cambio == "version":
+        texto, crlf = leer_texto(ruta_claude)
+        marca = "**Versión:** %s" % VERSION
+        if version_del_proyecto(texto):
+            texto = re.sub(r"\*\*Versi[oó]n:\*\*\s*[\d.]+", marca, texto, count=1)
+        elif re.search(r"^.*Configurado con brainme.*$", texto, re.M):
+            texto = re.sub(r"^(.*Configurado con brainme.*?)[ \t]*$", r"\1 · " + marca,
+                           texto, count=1, flags=re.M)
+        else:
+            s = seccion(texto, "brainme")
+            texto = texto[:s[1]].rstrip("\n") + "\n\n" + marca + "\n" + ("\n" + texto[s[1]:] if s[1] < len(texto) else "")
+        escribir_texto(ruta_claude, texto, crlf)
+    elif clave_cambio == "seccion_graphify":
+        texto, crlf = leer_texto(ruta_claude)
+        s = seccion(texto, "graphify")
+        escribir_texto(ruta_claude, (texto[:s[0]].rstrip("\n") + "\n\n" + texto[s[1]:]).rstrip("\n") + "\n", crlf)
+    elif clave_cambio == "aviso_graphify":
+        ruta = os.path.join(raiz, ".claude", "settings.json")
+        with open(ruta, encoding="utf-8") as f:
+            datos = json.load(f)
+        nuevos, _ = hooks_graphify(datos)
+        if nuevos:
+            datos["hooks"] = nuevos
+        else:
+            datos.pop("hooks", None)
+        with open(ruta, "w", encoding="utf-8") as f:
+            json.dump(datos, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+    elif clave_cambio == "bitacora":
+        escribir_texto(os.path.join(raiz, BITACORA), CABECERA_BITACORA, False)
+    elif clave_cambio == "graphifyignore":
+        ruta = os.path.join(raiz, ".graphifyignore")
+        texto, crlf = leer_texto(ruta)
+        faltan = [l for l in LINEAS_IGNORE if l not in texto.split("\n")]
+        texto = texto.rstrip("\n") + "\n\n# brainme 2.1: bitácora, versiones viejas y generadores\n" + \
+            "\n".join(faltan) + "\n"
+        escribir_texto(ruta, texto, crlf)
+
+
+def versiones_viejas(rels):
+    """Entregables en 05_exports con una versión más nueva en la misma carpeta."""
+    grupos = {}
+    for r in rels:
+        if not r.startswith("05_exports/") or aparte(r):
+            continue
+        m = RE_VERSION_ARCHIVO.match(r.rsplit("/", 1)[-1])
+        if m:
+            k = (carpeta_de(r), m.group("base"), m.group("resto") or "", m.group("ext").lower())
+            grupos.setdefault(k, []).append((int(m.group("n")), r))
+    viejas = []
+    for lista in grupos.values():
+        lista.sort()
+        viejas += [r for _, r in lista[:-1]]
+    return sorted(viejas)
+
+
+def cmd_versiones(args):
+    raiz = os.path.abspath(args.raiz)
+    viejas = versiones_viejas(listar_archivos(raiz))
+    if not viejas:
+        print("No hay versiones viejas sueltas en 05_exports.")
+        return
+    print("Versiones viejas con una versión más nueva al lado: %d" % len(viejas))
+    for r in viejas[:15]:
+        print("  " + r)
+    if len(viejas) > 15:
+        print("  ... y %d más" % (len(viejas) - 15))
+    if args.plan:
+        plan = {"movimientos": [{"de": r, "a": carpeta_de(r) + "/_versiones/"} for r in viejas]}
+        os.makedirs(os.path.dirname(os.path.join(raiz, args.plan)) or raiz, exist_ok=True)
+        with open(os.path.join(raiz, args.plan), "w", encoding="utf-8") as f:
+            json.dump(plan, f, ensure_ascii=False, indent=1)
+        print("Plan escrito en %s: córrelo con BRAIN mover --plan %s" % (args.plan, args.plan))
+
+
+def cmd_migrar(args):
+    raiz = os.path.abspath(args.raiz)
+    base = os.path.join(raiz, ".brainme", "migraciones")
+    if args.deshacer:
+        regs = sorted(os.listdir(base)) if os.path.isdir(base) else []
+        if not regs:
+            print("No hay migraciones que deshacer.")
+            sys.exit(1)
+        carpeta = os.path.join(base, regs[-1])
+        with open(os.path.join(carpeta, "registro.json"), encoding="utf-8") as f:
+            reg = json.load(f)
+        for rel in reg["copias"]:
+            shutil.copy2(os.path.join(carpeta, "originales", rel), os.path.join(raiz, rel))
+        for rel in reg["creados"]:
+            ruta = os.path.join(raiz, rel)
+            if os.path.exists(ruta) and (leer_texto(ruta)[0] or "") == CABECERA_BITACORA:
+                os.remove(ruta)
+            elif os.path.exists(ruta):
+                print("Dejo %s porque ya tiene entradas." % rel)
+        shutil.rmtree(carpeta)
+        print("Migración deshecha: %s restaurados." % ", ".join(reg["copias"] or ["nada"]))
+        return
+    claude_md = leer_texto(os.path.join(raiz, "CLAUDE.md"))[0] or ""
+    if "## brainme" not in claude_md:
+        print("Esta carpeta no está configurada con brainme (falta ## brainme en CLAUDE.md).")
+        sys.exit(1)
+    cambios = revisar_migracion(raiz)
+    rels = listar_archivos(raiz)
+    print("brainme del proyecto: %s · brainme del skill: %s" % (
+        version_del_proyecto(claude_md) or "2.0 o anterior", VERSION))
+    if not args.aplicar:
+        print("Cambios automáticos (BRAIN migrar --aplicar): %d" % len(cambios))
+        for _, desc in cambios:
+            print("  - " + desc)
+        print("Con ayudantes, después:")
+        print("  - Notas sin resumen: %d (ayudante de resúmenes)" % len(notas_sin_resumen(raiz, rels)))
+        print("  - Versiones viejas sueltas en 05_exports: %d (BRAIN versiones)" % len(versiones_viejas(rels)))
+        if not leer_config().get("autor"):
+            print("  - Autor de este computador: no definido (BRAIN autor)")
+        return
+    if not cambios:
+        print("No hay cambios automáticos pendientes.")
+        return
+    carpeta = os.path.join(base, ahora())
+    copias, creados = [], []
+    for rel in ("CLAUDE.md", ".claude/settings.json", ".graphifyignore"):
+        if os.path.exists(os.path.join(raiz, rel)):
+            os.makedirs(os.path.dirname(os.path.join(carpeta, "originales", rel)), exist_ok=True)
+            shutil.copy2(os.path.join(raiz, rel), os.path.join(carpeta, "originales", rel))
+            copias.append(rel)
+    for k, desc in cambios:
+        if k == "bitacora":
+            creados.append(BITACORA)
+        aplicar_cambio(raiz, k)
+        print("  ✓ " + desc)
+    with open(os.path.join(carpeta, "registro.json"), "w", encoding="utf-8") as f:
+        json.dump({"version": VERSION, "cambios": [k for k, _ in cambios], "copias": copias,
+                   "creados": creados}, f, ensure_ascii=False, indent=1)
+    print("Migración aplicada. Para deshacerla: BRAIN migrar --deshacer")
+
+
+def estado_21(raiz, rels, texto_claude, configurado):
+    """Líneas de estado que agregó brainme 2.1."""
+    if configurado and version_tupla(version_del_proyecto(texto_claude)) < version_tupla(VERSION):
+        print("Migración pendiente: el proyecto usa brainme %s y el skill es %s (references/migrar.md)." % (
+            version_del_proyecto(texto_claude) or "2.0 o anterior", VERSION))
+    sin = notas_sin_resumen(raiz, rels)
+    if sin:
+        print("Notas sin resumen: %d (ayudante de resúmenes)" % len(sin))
+    largas = []
+    for r in notas_resumibles(rels):
+        if r.split("/")[0] in ("01_knowledge", "02_decisions", "03_open_questions"):
+            texto = leer_texto(os.path.join(raiz, r))[0] or ""
+            if leer_fm(texto).get("largo", "").lower() not in ("si", "sí", "true") and \
+                    analizar_nota(texto)["palabras"] > PALABRAS_NOTA_LARGA:
+                largas.append(r.rsplit("/", 1)[-1][:-3])
+    if largas:
+        print("Notas largas (más de %s palabras): %d -> %s" % (
+            miles(PALABRAS_NOTA_LARGA), len(largas), ", ".join("[[%s]]" % n for n in largas[:6]) +
+            (" ..." if len(largas) > 6 else "")))
+    existentes = {clave(r) for r in rels}
+    conflictos = [r for r in rels if RE_COPIA_CONFLICTO.match(r.rsplit("/", 1)[-1]) and clave(
+        re.sub(r" \d+(\.[A-Za-z0-9]+)$", r"\1", r)) in existentes]
+    if conflictos:
+        print("Copias en conflicto de iCloud: %d -> %s" % (len(conflictos), ", ".join(conflictos[:6])))
+    viejas = versiones_viejas(rels)
+    if viejas:
+        print("Versiones viejas sueltas en 05_exports: %d (BRAIN versiones)" % len(viejas))
+    entradas = entradas_bitacora(leer_texto(os.path.join(raiz, BITACORA))[0])
+    if entradas:
+        print("Bitácora (últimas %d):" % min(3, len(entradas)))
+        for e in entradas[-3:]:
+            print("  %s %s · %s" % (e["fecha"], e["hora"], e["linea"][:160]))
+    if not leer_config().get("autor"):
+        print("Autor de este computador: no definido (BRAIN autor)")
+
+
 def main():
     p = argparse.ArgumentParser(description="Estado y orden de un proyecto brainme, sin romper enlaces.")
     p.add_argument("--raiz", default=".", help="carpeta del proyecto (por defecto, la actual)")
@@ -1095,10 +1693,35 @@ def main():
     d = sub.add_parser("deshacer")
     d.add_argument("--registro")
     sub.add_parser("a-wikilinks")
+    sr = sub.add_parser("sin-resumen")
+    sr.add_argument("--lotes", type=int, nargs="?", const=TAMANO_LOTE,
+                    help="escribe lotes en .brainme/resumenes/ (por defecto de %d notas)" % TAMANO_LOTE)
+    pr = sub.add_parser("poner-resumenes")
+    pr.add_argument("--desde", required=True, help='JSON {"ruta/nota.md": "resumen"}')
+    au = sub.add_parser("autor")
+    au.add_argument("nombre", nargs="?")
+    bi = sub.add_parser("bitacora")
+    bi.add_argument("texto", nargs="?")
+    bi.add_argument("--sigue")
+    bi.add_argument("--handoff", help="archivo con el texto del handoff")
+    bi.add_argument("--ultimas", type=int)
+    bi.add_argument("--handoff-ultimo", action="store_true")
+    co = sub.add_parser("consumo")
+    co.add_argument("--desde", help="AAAA-MM-DD")
+    co.add_argument("--sesiones", type=int, default=5)
+    mi = sub.add_parser("migrar")
+    mi.add_argument("--aplicar", action="store_true")
+    mi.add_argument("--deshacer", action="store_true")
+    ve = sub.add_parser("versiones")
+    ve.add_argument("--plan", help="ruta del plan para BRAIN mover")
+    sub.add_parser("version")
     args = p.parse_args()
     comandos = {"sincroniza": cmd_sincroniza, "estado": cmd_estado, "nombres": cmd_nombres, "inventario": cmd_inventario, "respaldo": cmd_respaldo, "mover": cmd_mover,
                 "verificar": cmd_verificar, "deshacer": cmd_deshacer,
-                "a-wikilinks": cmd_a_wikilinks}
+                "a-wikilinks": cmd_a_wikilinks, "sin-resumen": cmd_sin_resumen,
+                "poner-resumenes": cmd_poner_resumenes, "autor": cmd_autor,
+                "bitacora": cmd_bitacora, "consumo": cmd_consumo, "migrar": cmd_migrar,
+                "versiones": cmd_versiones, "version": lambda a: print(VERSION)}
     if args.cmd not in comandos:
         p.print_help()
         sys.exit(1)

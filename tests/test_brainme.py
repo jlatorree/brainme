@@ -1,0 +1,136 @@
+"""Pruebas mínimas de scripts/brainme.py. No usan Claude: corren el script sobre un
+proyecto de ejemplo armado en una carpeta temporal.
+
+    python3 -m unittest discover tests
+"""
+
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import unittest
+
+SCRIPT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts", "brainme.py")
+
+# Un proyecto de una versión anterior: sin versión ni resúmenes, con el aviso de
+# Graphify, una versión vieja de un entregable y una copia en conflicto de iCloud.
+ARCHIVOS = {
+    "CLAUDE.md": "# viejo\n\n## brainme\n\n**Proyecto:** viejo · **De qué trata:** prueba · "
+                 "**Configurado con brainme:** 2026-01-01\n\n## graphify\n\n"
+                 "For codebase questions, first run graphify query.\n",
+    ".claude/settings.json": json.dumps({"hooks": {"PreToolUse": [{"matcher": "Bash|Grep", "hooks": [
+        {"type": "command", "command": "\"$HOME/.local/bin/graphify\" hook-guard search"}]}]}}),
+    ".graphifyignore": "graphify-out/\n00_inbox/\n",
+    "01_knowledge/idea-central.md": "---\ntitulo: \"Idea central\"\ntipo: conocimiento\n---\n\n"
+                                    "La idea. Ver [[decision-precio]].\n",
+    "01_knowledge/idea-larga.md": "---\ntitulo: \"Larga\"\ntipo: conocimiento\n---\n\n" + "palabra " * 1200,
+    "01_knowledge/idea-central 2.md": "copia en conflicto\n",
+    "02_decisions/decision-precio.md": "---\ntitulo: \"Precio\"\ntipo: decision\nresumen: \"Cobramos por fase.\"\n"
+                                       "---\n\nCuerpo [[idea-central]] [[idea-central]].\n",
+    "05_exports/reports/informe-v1.md": "v1\n",
+    "05_exports/reports/informe-v2.md": "v2\n",
+}
+
+
+class BrainmeTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.raiz = os.path.join(self.tmp.name, "proyecto")
+        for rel, texto in ARCHIVOS.items():
+            ruta = os.path.join(self.raiz, rel)
+            os.makedirs(os.path.dirname(ruta), exist_ok=True)
+            with open(ruta, "w", encoding="utf-8") as f:
+                f.write(texto)
+        self.env = dict(os.environ, XDG_CONFIG_HOME=os.path.join(self.tmp.name, "config"),
+                        CLAUDE_CONFIG_DIR=os.path.join(self.tmp.name, "claude"))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def brain(self, *args, codigo=0):
+        r = subprocess.run([sys.executable, SCRIPT, "--raiz", self.raiz] + list(args),
+                           capture_output=True, text=True, env=self.env)
+        self.assertEqual(r.returncode, codigo, r.stdout + r.stderr)
+        return r.stdout
+
+    def leer(self, rel):
+        with open(os.path.join(self.raiz, rel), encoding="utf-8") as f:
+            return f.read()
+
+    def test_migrar_aplica_y_deshace(self):
+        salida = self.brain("migrar")
+        self.assertIn("Cambios automáticos (BRAIN migrar --aplicar): 5", salida)
+        self.brain("migrar", "--aplicar")
+        claude_md = self.leer("CLAUDE.md")
+        self.assertTrue(claude_md.endswith("**Configurado con brainme:** 2026-01-01 · **Versión:** 2.1.0\n"))
+        self.assertNotIn("## graphify", claude_md)
+        self.assertEqual(json.loads(self.leer(".claude/settings.json")), {})
+        self.assertIn("**/_versiones/", self.leer(".graphifyignore"))
+        self.assertTrue(os.path.exists(os.path.join(self.raiz, "bitacora.md")))
+        self.assertIn("No hay cambios automáticos", self.brain("migrar", "--aplicar"))
+        self.brain("migrar", "--deshacer")
+        self.assertEqual(self.leer("CLAUDE.md"), ARCHIVOS["CLAUDE.md"])
+        self.assertFalse(os.path.exists(os.path.join(self.raiz, "bitacora.md")))
+
+    def test_resumenes_por_lotes_sin_tocar_el_texto(self):
+        salida = self.brain("sin-resumen", "--lotes", "1")
+        self.assertIn("Notas sin resumen: 4, en 4 lotes", salida)
+        with open(os.path.join(self.raiz, ".brainme/resumenes/lote-01.json"), encoding="utf-8") as f:
+            self.assertEqual(json.load(f), ["01_knowledge/idea-central.md"])  # la más enlazada primero
+        with open(os.path.join(self.raiz, "r.json"), "w", encoding="utf-8") as f:
+            json.dump({"01_knowledge/idea-central.md": "La idea: precio por fase.",
+                       "02_decisions/decision-precio.md": "No debe cambiar."}, f)
+        self.assertIn("Resúmenes escritos: 1 · ya tenían: 1", self.brain("poner-resumenes", "--desde", "r.json"))
+        nota = self.leer("01_knowledge/idea-central.md")
+        self.assertIn('resumen: "La idea: precio por fase."\n---\n\nLa idea. Ver [[decision-precio]].\n', nota)
+        self.assertIn('resumen: "Cobramos por fase."', self.leer("02_decisions/decision-precio.md"))
+
+    def test_bitacora_pide_autor_y_guarda_handoff(self):
+        self.brain("bitacora", "Algo", codigo=2)
+        self.brain("autor", "Ana P.")
+        self.brain("bitacora", "Procesé el inbox", "--sigue", "graduar la pregunta")
+        with open(os.path.join(self.raiz, "h.md"), "w", encoding="utf-8") as f:
+            f.write("**Objetivo:** probar.\n\n- uno\n- dos\n")
+        self.brain("bitacora", "--handoff", "h.md")
+        self.brain("bitacora", "Después del handoff")
+        ultimas = self.brain("bitacora", "--ultimas", "5").strip().split("\n")
+        self.assertEqual(len(ultimas), 3)
+        self.assertIn("Ana P. · Procesé el inbox **Sigue:** graduar la pregunta", ultimas[0])
+        self.assertIn("Handoff · Ana P.", ultimas[1])
+        self.assertIn("- uno\n- dos", self.brain("bitacora", "--handoff-ultimo"))
+
+    def test_estado_avisa_lo_nuevo(self):
+        salida = self.brain("estado")
+        self.assertIn("Migración pendiente", salida)
+        self.assertIn("Notas sin resumen: 4", salida)
+        self.assertIn("Notas largas (más de 1.000 palabras): 1 -> [[idea-larga]]", salida)
+        self.assertIn("Copias en conflicto de iCloud: 1", salida)
+        self.assertIn("Versiones viejas sueltas en 05_exports: 1", salida)
+
+    def test_versiones_y_mover(self):
+        self.brain("versiones", "--plan", ".brainme/plan.json")
+        self.brain("mover", "--plan", os.path.join(self.raiz, ".brainme/plan.json"))
+        self.assertTrue(os.path.exists(os.path.join(self.raiz, "05_exports/reports/_versiones/informe-v1.md")))
+        self.assertNotIn("informe-v1", self.brain("nombres"))
+
+    def test_consumo_lee_registros_sin_repetir_mensajes(self):
+        carpeta = os.path.join(self.tmp.name, "claude", "projects")
+        nombre = "".join(c if c.isascii() and c.isalnum() else "-" for c in self.raiz)
+        os.makedirs(os.path.join(carpeta, nombre))
+        lineas = []
+        for i, ctx in enumerate([100000, 300000]):
+            for _ in range(2):  # el mismo mensaje aparece en dos líneas
+                lineas.append(json.dumps({"type": "assistant", "timestamp": "2026-10-01T10:00:00Z",
+                                          "message": {"id": "m%d" % i, "usage": {
+                                              "input_tokens": 10, "cache_read_input_tokens": ctx - 10,
+                                              "cache_creation_input_tokens": 0}}}))
+        with open(os.path.join(carpeta, nombre, "s1.jsonl"), "w", encoding="utf-8") as f:
+            f.write("\n".join(lineas) + "\n")
+        salida = self.brain("consumo")
+        self.assertIn("1 sesiones, 2 respuestas", salida)
+        self.assertIn("promedio 200.000", salida)
+
+
+if __name__ == "__main__":
+    unittest.main()

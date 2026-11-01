@@ -1,6 +1,6 @@
 ---
 name: brainme
-description: 'Segundo cerebro de proyectos con Graphify, en carpetas de notas markdown (ideal para Obsidian). Úsalo cuando el usuario diga "brainme" o quiera: configurar u ordenar la carpeta del proyecto, ponerse al día, procesar o consumir el inbox o notas de reunión, guardar algo que surgió ("guarda esto"), revisar o resolver preguntas abiertas, investigar literatura académica, hacer un informe, guardar un entregable, o avise que añadió notas.'
+description: 'Segundo cerebro de un proyecto en notas markdown (Obsidian). Úsalo cuando el usuario diga "brainme" o quiera: configurar u ordenar la carpeta, ponerse al día, procesar el inbox o notas de reunión, guardar algo ("guarda esto"), graduar preguntas abiertas, investigar literatura, guardar un informe o entregable, hacer un handoff a otra sesión, o avise que añadió notas.'
 ---
 
 # Brainme
@@ -19,45 +19,58 @@ hiciste, dónde quedó y qué sigue (di "conexiones" y "notas", no "edges" ni "n
 3. **Inbox, siempre procesado:** todo archivo que veas en `00_inbox/` (lo pidió el
    usuario, lo lista `BRAIN estado` o lo abriste para otra tarea) termina procesado
    con el flujo 2, en la misma sesión y sin esperar a que lo pida.
+4. **Versión anterior:** si `BRAIN estado` dice "Migración pendiente", ofrece
+   `references/migrar.md` con un solo OK, una vez por sesión.
+5. **Al terminar cada flujo que cambió algo**, anota una línea en la bitácora:
+   `BRAIN bitacora "<qué se hizo>" --sigue "<qué sigue>"`. Después de algo pesado (un
+   inbox de más de 3 elementos, un entregable, una investigación) o si cambia el tema,
+   sugiere en una línea pedir un handoff (flujo 9).
 
-Los archivos del skill están en su carpeta: `scripts/brainme.py`, `templates/` y
-`references/`. En los comandos, `BRAIN` significa
+Los archivos del skill están en su carpeta: `scripts/brainme.py`, `templates/`,
+`references/` y `agents/`. En los comandos, `BRAIN` significa
 `python3 "<carpeta de este skill>/scripts/brainme.py"`, y se corre desde la raíz del
 proyecto.
 
 ## Vocabulario
 
-- **Nota atómica:** una idea por nota, creada con `templates/note.md`, con al menos un
-  wikilink a una nota existente. Enlazar es construir el grafo: una nota sin enlaces
-  es una isla.
+- **Nota atómica:** una idea por nota, creada con `templates/note.md`, con `resumen`,
+  `autor` y al menos un wikilink a una nota existente. Enlazar es construir el grafo:
+  una nota sin enlaces es una isla.
 - **Sincroniza:** `BRAIN sincroniza`. Corre `graphify update .`, gratis y en segundos:
   registra notas, títulos y wikilinks, sin leer el contenido, y deja solo el último
-  respaldo del grafo. Va después de escribir y antes de consultar. El índice vigente es
-  `graphify-out/GRAPH_REPORT.md`; las carpetas con fecha son respaldos.
-- **Lectura profunda:** invocar el skill `graphify` con los argumentos `. --update`.
-  La IA lee el contenido de lo nuevo (PDFs, imágenes, Office) y extrae conceptos.
-  Cuesta ~15.000 tokens de instrucciones más la lectura de cada archivo, así que va
-  una vez, al cerrar el bloque de trabajo, y solo cuando `BRAIN estado` la recomienda
-  o el usuario la pide. Las notas que escribes tú no la necesitan: tú ya pusiste sus
-  conexiones.
-- **Consulta:** `graphify query "<pregunta>" --budget 1500`. Devuelve las notas
-  relevantes con su ruta (`src=`); abre solo esas. Relaciones:
-  `graphify path "<a>.md" "<b>.md"` o `graphify explain "<nota>"`.
+  respaldo del grafo. Va después de escribir y antes de consultar.
+- **Lectura profunda:** invocar el skill `graphify` con `. --update`: la IA extrae
+  conceptos de PDFs, imágenes y Office nuevos. Cuesta ~15.000 tokens más la lectura,
+  así que va una vez al cerrar el bloque de trabajo, cuando `BRAIN estado` la recomienda
+  o el usuario la pide.
+- **Buscar:** con texto, en títulos, `resumen` y contenido
+  (`grep -rl --exclude-dir={_versiones,_taller,.brainme,graphify-out} ...`). Lee el
+  `resumen` antes de abrir una nota completa.
+- **Consulta al grafo**, para preguntas de relación ("qué depende de X", "cómo se conecta
+  A con B"): `graphify path "<a>.md" "<b>.md"`, `graphify explain "<nota>"` o
+  `graphify query "<pregunta>" --budget 1500`.
+- **Bitácora:** `bitacora.md`, en la raíz. Una línea por cada flujo terminado, firmada
+  con `BRAIN autor`, y los handoffs. Así cualquiera, también otra persona, sabe qué pasó
+  y qué sigue.
+- **Ayudantes:** subagentes con modelo y esfuerzo fijos, para que la sesión principal no
+  cargue lo pesado. `brainme:resumidor` (Haiku) escribe resúmenes;
+  `brainme:lector` (Sonnet, esfuerzo alto) lee documentos largos (PDF, Office,
+  transcripciones de más de ~3.000 palabras) y devuelve un borrador de ficha;
+  `brainme:investigador` (Opus, esfuerzo xhigh) hace la investigación de literatura. Sin
+  el plugin, usa un subagente general con ese modelo, ese esfuerzo y las instrucciones de
+  `agents/`.
+- **Lectura acotada:** de HTML, decks, scripts, CSV grandes y respaldos, lee su ficha o
+  las primeras líneas. `_versiones/` y `_taller/` se abren solo a pedido del usuario.
 - **Índice de nombres:** `BRAIN nombres` lista todas las notas por carpeta en pocas
-  líneas. Detecta duplicados con él antes de crear notas; la consulta queda para
-  preguntas de contenido.
+  líneas. Detecta duplicados con él antes de crear notas.
 - **Mover, no borrar:** lo procesado se mueve (a su carpeta o a un respaldo en
   `.brainme/`); borrar es solo a pedido explícito del usuario. Única excepción: los
-  respaldos viejos del grafo que limpia `BRAIN sincroniza`.
+  respaldos y las copias en conflicto del grafo que limpia `BRAIN sincroniza`.
 - **Gradúa:** convierte una pregunta resuelta en nota de conocimiento o decisión, y
   mueve la pregunta a `03_open_questions/archive/`.
 - **Doble cita:** cada afirmación con fuente lleva el link real y el wikilink a su
   ficha: `([Pérez, 2023](https://doi.org/10.xxxx/yyyy); [[perez-2023-onboarding-pymes]])`.
   El link externo solo no crea conexiones en el grafo.
-
-Los avisos "MANDATORY: ... graphify query" que aparecen al buscar con `grep` o `find`
-vienen de un hook pensado para código. Cuando ya sabes qué archivo necesitas (inbox,
-plantilla, nota concreta), ábrelo directo.
 
 ## Estructura del proyecto
 
@@ -70,23 +83,23 @@ plantilla, nota concreta), ábrelo directo.
 04_sources/literature/    una ficha por paper (+ su PDF si lo hay, fuera del grafo)
 04_sources/web/           fichas de fuentes web
 05_exports/               entregables: reports/, diagrams/, data/, presentations/ (con fichas)
+  */_versiones/           versiones anteriores de cada entregable
 CLAUDE.md                 hace que cada sesión en la carpeta use brainme
+bitacora.md               qué se hizo en cada sesión, quién y qué sigue, y los handoffs
+_taller/                  generadores y scripts de entregables (fuera de búsquedas y del grafo)
 .graphifyignore           qué queda fuera del grafo
 .brainme/                respaldos, inbox ya procesado, registros e inventario (fuera del grafo)
 ```
-
-Las notas de reunión entran por `00_inbox/` y, al procesarlas, sus piezas se reparten
-entre conocimiento, decisiones y preguntas.
 
 ## Flujos
 
 ### 1. Ponerse al día ("brainme", "ponme al día")
 
 1. Sincroniza.
-2. `BRAIN estado`: inbox, archivos fuera de la estructura, preguntas abiertas por
-   prioridad, preguntas por graduar, últimas decisiones, lectura profunda pendiente y
-   lo más conectado del grafo.
-3. Si el usuario quiere más contexto sobre algún tema, una consulta.
+2. `BRAIN estado`.
+3. Si el usuario quiere más contexto sobre algún tema, busca con texto y lee
+   resúmenes. Si pide "retoma el handoff", sigue la parte "Retomar" de
+   `references/handoff.md`.
 4. Resumen de hasta 8 líneas, cada una respaldada por la salida de `estado`:
 
    ```
@@ -94,7 +107,8 @@ entre conocimiento, decisiones y preguntas.
    **Últimas decisiones:** [[decision-...]], [[decision-...]]
    **Preguntas abiertas (N):** [[pregunta-...]] (alta), ...
    **Inbox:** N procesados en esta sesión.
-   **Pendiente:** solo lo que aplique (ordenar archivos, graduar preguntas, lectura profunda).
+   **Última sesión:** la última entrada de la bitácora, con su autor.
+   **Pendiente:** solo lo que aplique (migración, notas sin resumen, copias en conflicto, ordenar archivos, graduar preguntas, lectura profunda).
    ```
 
 ### 2. Procesar el inbox ("procesa el inbox")
@@ -103,7 +117,10 @@ entre conocimiento, decisiones y preguntas.
 en la actualización de una nota existente.
 
 1. Lista `00_inbox/`. Vacío: dilo y termina.
-2. `BRAIN nombres`, una vez para todo el lote.
+2. `BRAIN nombres`, una vez para todo el lote. **Lote grande:** si trae más de 3
+   elementos, delega. Cada documento largo va a `brainme:lector`, que devuelve un
+   borrador de ficha. El resto se reparte en tandas a subagentes generales que siguen
+   este flujo. La sesión principal recibe solo las tablas finales.
 3. Lee cada elemento y sepáralo en piezas: conocimiento, decisiones, preguntas,
    pendientes y fuentes. En reuniones: fecha, participantes, acuerdos y dudas.
 4. Cada pieza a su nota atómica: conocimiento a `01_knowledge/` (`tipo: conocimiento`),
@@ -112,8 +129,8 @@ en la actualización de una nota existente.
    `04_sources/web/` con `templates/web-source.md`, PDF de un paper a su ficha en
    `04_sources/literature/` con `templates/literature-note.md` (lo lees tú). Si el índice muestra una nota sobre
    la misma idea, amplíala en su sección `## Actualizaciones`, con fecha.
-5. Cada nota nueva lleva `origen: "<nombre-del-original> (inbox, AAAA-MM-DD)"`, en texto:
-   el original sale del vault.
+5. Cada nota nueva lleva `origen: "<nombre-del-original> (inbox, AAAA-MM-DD)"`, en
+   texto: el original sale del vault.
 6. Vacía el inbox:
    - Originales de texto (apuntes, notas de reunión): a
      `.brainme/inbox-procesado/AAAA-MM-DD/` (`mkdir -p` y `mv`), un respaldo fuera de
@@ -132,11 +149,7 @@ en la actualización de una nota existente.
 2. Revisa el índice de nombres: si ya hay una nota de esa idea, actualízala.
 3. Crea la nota atómica; varias ideas son varias notas enlazadas entre sí.
 4. Sincroniza.
-5. Si la respuesta salió de una consulta y resultó útil, regístralo para que Graphify
-   aprenda: `graphify save-result --question "<q>" --answer "<a>" --nodes "<Nodo 1>" "<Nodo 2>" --outcome useful`
-   (o `dead_end`, o `corrected` con `--correction "<respuesta correcta>"`). Al cerrar la
-   sesión, `graphify reflect --if-stale` consolida esos aprendizajes.
-6. Confirma en una línea: "Guardé [[nombre]] en 01_knowledge/, enlazada a [[x]] y [[y]]."
+5. Confirma en una línea: "Guardé [[nombre]] en 01_knowledge/, enlazada a [[x]] y [[y]]."
 
 ### 4. Preguntas abiertas ("qué preguntas siguen abiertas")
 
@@ -157,9 +170,11 @@ resolvería y `prioridad`.
 
 ### 5. Investigar literatura ("investiga la literatura sobre...")
 
-Sigue `references/investigar.md` completo: la investigación y la lectura las hace el
-deep research de Claude Code; brainme le da el encargo y almacena el resultado en
-fichas, informe con doble cita y conexiones con el proyecto.
+Delega la investigación completa a `brainme:investigador` (Opus, esfuerzo xhigh). Dale
+la pregunta, a qué pregunta o decisión del proyecto sirve, el contexto en dos frases y
+lo ya fichado (`BRAIN nombres`, carpeta `04_sources/`). El ayudante sigue
+`references/investigar.md`: deep research, fichas, informe con doble cita y conexiones
+con el proyecto. Tú recibes el resultado y se lo cuentas al usuario.
 
 ### 6. Entregables e informes ("haz un informe de...", "dónde guardo este entregable")
 
@@ -176,6 +191,11 @@ profunda. Si dejó archivos fuera de la estructura, ofrece ordenarlos (flujo 8).
 Sigue `references/ordenar.md` completo: inventario, plan con un solo OK, respaldo,
 mover sin romper enlaces, verificar y, si hace falta, deshacer.
 
+### 9. Handoff ("ayúdame con un handoff", `/brainme:handoff`)
+
+Sigue `references/handoff.md`: guarda en notas lo que surgió, escribe el handoff en la
+bitácora y abre una sesión nueva que retoma desde ahí.
+
 ## Convenciones de las notas
 
 - **Nombres:** minúsculas, con guiones, sin tildes ni espacios, descriptivos y únicos
@@ -189,11 +209,15 @@ mover sin romper enlaces, verificar y, si hace falta, deshacer.
   `[[decision-modelo-de-precio]]`, en el cuerpo o en el frontmatter, con alias
   (`[[nota|texto]]`) o sección (`[[nota#Sección]]`). Así mover una nota no rompe nada y
   Graphify los lee siempre. Los links markdown quedan para URLs externas.
-- **Frontmatter:** completa lo que aplica, quita el resto y todos los placeholders
-  `<...>` y comentarios de la plantilla. Fechas `AAAA-MM-DD`. Valores de `tipo`:
+- **Resumen y autor:** `resumen` son una o dos frases con la idea; se escribe al crear la
+  nota y se actualiza cuando cambia. `autor` es el de `BRAIN autor`; si no tiene nombre,
+  pregúntaselo al usuario una vez. Una nota larga a propósito lleva `largo: si`.
+- **Frontmatter:** completa lo que aplica y quita el resto, con los placeholders `<...>`
+  y comentarios de la plantilla. Fechas `AAAA-MM-DD`. Valores de `tipo`:
   `conocimiento`, `decision`, `pregunta`, `literatura`, `fuente-web`, `entregable`.
 - **Tags:** pocos, en minúsculas, reutilizando los que ya existen.
-- **Lo que escribió el usuario** se amplía, no se reemplaza; para cambiarlo, pregúntale.
+- **Lo que escribió el usuario** se amplía en `## Actualizaciones`, con fecha y autor;
+  para cambiar su texto, pregúntale.
 
-Si un comando de Graphify falla, algo no aparece en el grafo o hay que reconstruirlo:
-`references/problemas.md`.
+Si un comando de Graphify falla, aparecen avisos "MANDATORY" al buscar, algo no aparece
+en el grafo o hay que reconstruirlo: `references/problemas.md`.

@@ -10,6 +10,7 @@ estado: <borrador | en revisión | final>
 audiencia: "<para quién es>"
 generado_con: "<skill o herramienta que lo generó>"
 proyecto: "<nombre del proyecto>"
+resumen: "<qué es y para qué sirve, en una o dos frases>"
 tags: [entregable, <tema>]
 relacionadas: ["[[decision-que-lo-sustenta]]", "[[fuente-que-lo-sustenta]]"]
 ---

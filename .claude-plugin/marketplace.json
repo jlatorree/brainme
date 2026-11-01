@@ -9,7 +9,7 @@
     {
       "name": "brainme",
       "source": "./",
-      "description": "Segundo cerebro de proyectos con Graphify, en carpetas de notas markdown (ideal para Obsidian): configura y ordena la carpeta, procesa el inbox en notas atómicas conectadas, gestiona preguntas y decisiones, guarda la investigación de literatura con doble cita y organiza entregables. Gasta pocos tokens: consulta el grafo en vez de releerlo todo.",
+      "description": "Segundo cerebro de proyectos con Graphify, en carpetas de notas markdown (ideal para Obsidian): configura y ordena la carpeta, procesa el inbox en notas atómicas conectadas, gestiona preguntas y decisiones, guarda la investigación de literatura con doble cita y organiza entregables. Gasta pocos tokens: resumen en cada nota, ayudantes con el modelo justo y handoff a una sesión nueva.",
       "author": {
         "name": "jlatorree",
         "url": "https://github.com/jlatorree"
@@ -26,7 +26,7 @@
         "research"
       ],
       "category": "productivity",
-      "version": "2.0.1"
+      "version": "2.1.0"
     }
   ]
 }

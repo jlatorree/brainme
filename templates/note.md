@@ -3,6 +3,8 @@ titulo: "<Título corto y claro: la idea en una frase>"
 tipo: <conocimiento | decision | pregunta>
 fecha: <AAAA-MM-DD>
 proyecto: "<nombre del proyecto>"
+resumen: "<la idea en una o dos frases, unos 200 caracteres; si ayuda, la pregunta que alguien haría para encontrarla>"
+autor: "<quién la escribe: BRAIN autor>"
 tags: [<tema-1>, <tema-2>]
 relacionadas: ["[[nota-existente-1]]", "[[nota-existente-2]]"]
 origen: "<nombre-del-original (inbox, AAAA-MM-DD) o conversación AAAA-MM-DD>"
