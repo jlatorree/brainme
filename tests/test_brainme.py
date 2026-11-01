@@ -48,8 +48,8 @@ class BrainmeTest(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def brain(self, *args, codigo=0):
-        r = subprocess.run([sys.executable, SCRIPT, "--raiz", self.raiz] + list(args),
+    def brain(self, *args, codigo=0, raiz=None):
+        r = subprocess.run([sys.executable, SCRIPT, "--raiz", raiz or self.raiz] + list(args),
                            capture_output=True, text=True, env=self.env)
         self.assertEqual(r.returncode, codigo, r.stdout + r.stderr)
         return r.stdout
@@ -63,7 +63,7 @@ class BrainmeTest(unittest.TestCase):
         self.assertIn("Cambios automáticos (BRAIN migrar --aplicar): 5", salida)
         self.brain("migrar", "--aplicar")
         claude_md = self.leer("CLAUDE.md")
-        self.assertTrue(claude_md.endswith("**Configurado con brainme:** 2026-01-01 · **Versión:** 2.2.0\n"))
+        self.assertTrue(claude_md.endswith("**Configurado con brainme:** 2026-01-01 · **Versión:** 3.0.0\n"))
         self.assertNotIn("## graphify", claude_md)
         self.assertEqual(json.loads(self.leer(".claude/settings.json")), {})
         self.assertIn("**/_versiones/", self.leer(".graphifyignore"))
@@ -119,6 +119,39 @@ class BrainmeTest(unittest.TestCase):
         self.assertIn("La enlazan (1):\n  [[idea-central]]", nota)
         camino = self.brain("mapa", "--camino", "idea-central", "decision-precio")
         self.assertIn("[[idea-central]] → [[decision-precio]]", camino)
+
+    def test_espacio_de_una_tesis(self):
+        tesis = os.path.join(self.tmp.name, "tesis")
+        os.makedirs(tesis)
+        with open(os.path.join(tesis, "CLAUDE.md"), "w", encoding="utf-8") as f:
+            f.write("# Tesis\n\nMis reglas.\n\n## brainme · espacio\n\n**Espacio:** tesis · **Contexto general:** "
+                    "`marco/` · **Versión:** 3.0.0\n\n### Ficha de cada proyecto\n\n- **Estado:** activo\n"
+                    "- **Prefijo de notas:**\n- **Pregunta del estudio:**\n")
+        self.brain("crear", "marco", "--trata", "Marco teórico común", raiz=tesis)
+        marco = os.path.join(tesis, "marco")
+        self.brain("crear", "proyectos/estudio-docentes", "--prefijo", "ed", raiz=marco, codigo=1)  # sin año
+        self.brain("crear", "proyectos/2026/estudio-docentes", raiz=marco, codigo=1)  # sin prefijo
+        salida = self.brain("crear", "proyectos/2026/estudio-docentes", "--prefijo", "ed", raiz=marco)
+        self.assertIn("Ficha por completar: Pregunta del estudio", salida)
+        estudio = os.path.join(tesis, "proyectos", "2026", "estudio-docentes")
+        with open(os.path.join(estudio, "CLAUDE.md"), encoding="utf-8") as f:
+            ficha = f.read()
+        self.assertIn("## Proyecto\n\n- **Estado:** activo\n- **Prefijo de notas:** `ed-`\n", ficha)
+        with open(os.path.join(estudio, "01_knowledge", "hallazgo.md"), "w", encoding="utf-8") as f:
+            f.write("Sin prefijo.\n")
+        self.assertIn("Notas sin el prefijo ed-: 1 -> [[hallazgo]]", self.brain("estado", raiz=estudio))
+        self.assertIn("- 2026/estudio-docentes · ed- · ", self.brain("espacio", raiz=tesis))
+        with open(os.path.join(estudio, "CLAUDE.md"), "w", encoding="utf-8") as f:
+            f.write(ficha.replace("**Estado:** activo", "**Estado:** cerrado 2026-12-01"))
+        self.assertIn("Cerrados (1): 2026/estudio-docentes", self.brain("espacio", raiz=tesis))
+
+    def test_detecta_espacio_armado_a_mano(self):
+        otro = os.path.join(self.tmp.name, "otro")
+        os.makedirs(otro)
+        for carpeta, texto in ((otro, "## brainme\n"), (self.tmp.name, "# Mi consultora\n")):
+            with open(os.path.join(carpeta, "CLAUDE.md"), "w", encoding="utf-8") as f:
+                f.write(texto)
+        self.assertIn("Espacio armado a mano: ..", self.brain("estado"))
 
     def test_versiones_y_mover(self):
         self.brain("versiones", "--plan", ".brainme/plan.json")

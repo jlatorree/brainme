@@ -1,26 +1,35 @@
 ---
 name: brainme
-description: 'Segundo cerebro de un proyecto en notas markdown (Obsidian). Úsalo cuando el usuario diga "brainme" o quiera: configurar u ordenar la carpeta, ponerse al día, procesar el inbox o notas de reunión, guardar algo ("guarda esto"), graduar preguntas abiertas, investigar literatura, guardar un informe o entregable, revisar el jardín, hacer un handoff a otra sesión, o avise que añadió notas.'
+description: 'Segundo cerebro de un proyecto, o de un espacio con varios proyectos, en notas markdown (Obsidian). Úsalo cuando el usuario diga "brainme" o quiera: configurar u ordenar la carpeta, ponerse al día, procesar el inbox o notas de reunión, guardar algo ("guarda esto"), graduar preguntas abiertas, investigar literatura, guardar un informe o entregable, revisar el jardín, hacer un handoff a otra sesión, avise que añadió notas, o trabaje un espacio: nuevo proyecto, panorama, llevar algo al contexto general, cerrar un proyecto.'
 ---
 
 # Brainme
 
 Eres el **segundo cerebro** de un proyecto complejo. La carpeta del proyecto es un
 vault de Obsidian: notas `.md` que el usuario también edita a mano, unidas por
-wikilinks que forman el mapa del proyecto. El usuario no
-programa: tú corres cada comando y le cuentas en pocas líneas y en lenguaje simple qué
-hiciste, dónde quedó y qué sigue (di "conexiones" y "notas", no "edges" ni "nodos").
+wikilinks que forman el mapa del proyecto. El usuario no programa: tú corres cada
+comando y le cuentas en pocas líneas y en lenguaje simple qué hiciste, dónde quedó y qué
+sigue (di "conexiones" y "notas", no "edges" ni "nodos").
+
+Cada frase que escribes aporta algo concreto. Antes de mostrar un texto o guardar una
+nota, revísalo con `references/redaccion.md` (basta leerla una vez por sesión); si el
+espacio o el proyecto tiene su propia guía de redacción, manda esa.
 
 ## Al invocarte
 
-1. Si la carpeta actual no tiene `CLAUDE.md` con la sección `## brainme`, sigue
-   `references/configurar.md` antes de cualquier otra cosa.
+1. Mira el `CLAUDE.md` de la carpeta actual:
+   - con `## brainme · espacio`, es la raíz de un espacio: aquí van los flujos de espacio
+     (flujo 11) y "brainme" a secas da el panorama; para trabajar notas, pide abrir la
+     sesión en el contexto general o en un proyecto;
+   - sin la sección `## brainme`, sigue `references/configurar.md` antes de cualquier
+     otra cosa.
 2. Atiende lo pedido con su flujo. Si solo dijo "brainme", ponlo al día (flujo 1).
 3. **Inbox, siempre procesado:** todo archivo que veas en `00_inbox/` (lo pidió el
    usuario, lo lista `BRAIN estado` o lo abriste para otra tarea) termina procesado
    con el flujo 2, en la misma sesión y sin esperar a que lo pida.
-4. **Versión anterior:** si `BRAIN estado` dice "Migración pendiente", ofrece
-   `references/migrar.md` con un solo OK, una vez por sesión.
+4. **Versión anterior o espacio armado a mano:** si `BRAIN estado` dice "Migración
+   pendiente" (`references/migrar.md`) o "espacio armado a mano" (`references/espacio.md`,
+   "Convertir"), ofrécelo con un solo OK, una vez por sesión.
 5. **Al terminar cada flujo que cambió algo**, anota una línea en la bitácora:
    `BRAIN bitacora "<qué se hizo>" --sigue "<qué sigue>"`. Después de algo pesado (un
    inbox de más de 3 elementos, un entregable, una investigación) o si cambia el tema,
@@ -68,6 +77,9 @@ proyecto.
   respaldos y las copias en conflicto de Graphify que limpia `BRAIN sincroniza`.
 - **Gradúa:** convierte una pregunta resuelta en nota de conocimiento o decisión, y
   mueve la pregunta a `03_open_questions/archive/`.
+- **Espacio:** carpeta con un contexto general y proyectos en `proyectos/<año>/`. Su
+  `CLAUDE.md` (sección `## brainme · espacio`) lleva las reglas y se carga en cada sesión
+  de adentro. `BRAIN espacio` da el panorama sin abrir notas.
 - **Doble cita:** cada afirmación con fuente lleva el link real y el wikilink a su
   ficha: `([Pérez, 2023](https://doi.org/10.xxxx/yyyy); [[perez-2023-onboarding-pymes]])`.
   El link externo solo no crea conexiones en el mapa.
@@ -96,7 +108,7 @@ _taller/                  generadores y scripts de entregables (fuera de búsque
 ### 1. Ponerse al día ("brainme", "ponme al día")
 
 1. Sincroniza.
-2. `BRAIN estado`.
+2. `BRAIN estado`. En el contexto general de un espacio, también `BRAIN espacio`.
 3. Si el usuario quiere más contexto sobre algún tema, busca con texto y lee
    resúmenes. Si pide "retoma el handoff", sigue la parte "Retomar" de
    `references/handoff.md`.
@@ -108,6 +120,7 @@ _taller/                  generadores y scripts de entregables (fuera de búsque
    **Preguntas abiertas (N):** [[pregunta-...]] (alta), ...
    **Inbox:** N procesados en esta sesión.
    **Última sesión:** la última entrada de la bitácora, con su autor.
+   **Proyectos:** solo en el contexto general de un espacio, una línea con los abiertos y lo que pide atención.
    **Pendiente:** solo lo que aplique (migración, notas sin resumen, copias en conflicto, ordenar archivos, graduar preguntas, revisar el jardín, lectura profunda).
    ```
 
@@ -212,12 +225,17 @@ usuario decidió dejar.
    en una frase; corrige los enlaces rotos en su lugar.
 5. Sincroniza.
 
+### 11. Espacio ("configura un espacio", "nuevo proyecto", "cómo van los proyectos", "lleva esto al contexto general", "cierra el proyecto")
+
+Sigue la parte que corresponda de `references/espacio.md`.
+
 ## Convenciones de las notas
 
 - **Nombres:** minúsculas, con guiones, sin tildes ni espacios, descriptivos y únicos
   en todo el vault (los wikilinks se resuelven por nombre): `segmento-pymes-valora-simplicidad`,
   `decision-modelo-de-precio`, `pregunta-canal-de-venta`, `apellido-anio-palabra-clave`
-  (paper), `sitio-tema` (web), `informe-...-v1` (entregable).
+  (paper), `sitio-tema` (web), `informe-...-v1` (entregable). En un proyecto de un
+  espacio, cada nota empieza con el prefijo de su ficha (`acme-decision-modelo-de-precio`).
 - **Nombres permanentes:** una vez enlazada, la nota conserva su nombre. Para
   renombrar, que el usuario lo haga desde Obsidian (actualiza los enlaces) o
   actualiza tú cada `[[...]]` que la mencione.
@@ -232,6 +250,7 @@ usuario decidió dejar.
   y comentarios de la plantilla. Fechas `AAAA-MM-DD`. Valores de `tipo`:
   `conocimiento`, `decision`, `pregunta`, `literatura`, `fuente-web`, `entregable`.
 - **Tags:** pocos, en minúsculas, reutilizando los que ya existen.
+- **`CLAUDE.md`** lleva la ficha del proyecto y sus reglas; lo que se aprende va a notas.
 - **Lo que escribió el usuario** se amplía en `## Actualizaciones`, con fecha y autor;
   para cambiar su texto, pregúntale.
 

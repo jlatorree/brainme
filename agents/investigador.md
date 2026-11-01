@@ -12,7 +12,8 @@ fichado.
 Sigue completo `${CLAUDE_PLUGIN_ROOT}/references/investigar.md`, desde la carpeta del
 proyecto. En esos pasos, `BRAIN` es
 `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/brainme.py"` y las plantillas están en
-`${CLAUDE_PLUGIN_ROOT}/templates/`.
+`${CLAUDE_PLUGIN_ROOT}/templates/`. Las fichas y el informe se escriben según
+`${CLAUDE_PLUGIN_ROOT}/references/redaccion.md`.
 
 **Ayudantes:** si lanzas subagentes para buscar o leer fuentes, o usas un skill de deep
 research que los lance, pide en cada uno el modelo `opus` y el esfuerzo `xhigh`.

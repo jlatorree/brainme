@@ -14,14 +14,13 @@ Graphify si había PDFs, imágenes u Office; y recibió el mensaje final.
 2. **Python 3.** Corre `xcode-select -p`. Si falla, faltan las herramientas de línea de
    comandos de Apple (traen Python 3): corre `xcode-select --install`, pide al usuario
    que acepte el aviso de macOS y que te avise cuando termine.
-3. **Carpetas** (`mkdir -p` respeta lo que ya existe):
-
-   ```bash
-   mkdir -p 00_inbox 01_knowledge 02_decisions 03_open_questions/archive 04_sources/literature 04_sources/web 05_exports/reports 05_exports/diagrams 05_exports/data 05_exports/presentations
-   ```
-4. **`CLAUDE.md`:** créalo desde `templates/CLAUDE.md` (nombre del proyecto = nombre de
-   la carpeta; fecha de hoy). Si ya existe, agrega al final la sección `## brainme`
-   de la plantilla y conserva todo lo demás.
+3. **¿Espacio?** `BRAIN espacio`. Si dice "Espacio armado a mano", o el usuario quiere
+   varios proyectos con un contexto general, sigue `references/espacio.md`. Si la
+   carpeta está dentro de un espacio, es un proyecto de ese espacio: sigue ahí "Nuevo
+   proyecto".
+4. **Carpetas y `CLAUDE.md`:** `BRAIN crear`. Crea las carpetas de la estructura y
+   `CLAUDE.md` desde `templates/CLAUDE.md`; si ya existía, le agrega la sección
+   `## brainme` y conserva todo lo demás.
 5. **Autor:** `BRAIN autor`. Si dice "no definido", pregúntale al usuario cómo quiere
    firmar (por ejemplo, "Jonathan L.") y corre `BRAIN autor "Nombre"`. Se guarda en
    este computador, no en la carpeta: en una carpeta compartida, cada persona firma con

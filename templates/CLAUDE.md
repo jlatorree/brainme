@@ -5,4 +5,4 @@
 Proyecto gestionado con el skill **brainme**. Invócalo al empezar cada sesión y para
 cualquier trabajo con las notas. El usuario no programa: corre tú los comandos.
 
-**Proyecto:** <nombre de la carpeta> · **De qué trata:** <una o dos frases; pídeselas al usuario si aún no están> · **Configurado con brainme:** <AAAA-MM-DD> · **Versión:** 2.2.0
+**Proyecto:** <nombre de la carpeta> · **De qué trata:** <una o dos frases; pídeselas al usuario si aún no están> · **Configurado con brainme:** <AAAA-MM-DD> · **Versión:** 3.0.0

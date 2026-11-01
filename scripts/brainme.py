@@ -20,6 +20,8 @@ Subcomandos (se corren desde la raíz del proyecto):
   consumo      tokens de contexto por respuesta, leídos de los registros de Claude Code
   migrar       revisa y aplica lo que le falta a un proyecto de una versión anterior
   versiones    plan para llevar versiones viejas de entregables a _versiones/
+  espacio      panorama de un espacio: contexto general y proyectos, sin abrir notas
+  crear        carpetas y CLAUDE.md de un proyecto (suelto, contexto general o de un espacio)
 
 Solo usa la biblioteca estándar de Python (3.9 o superior).
 """
@@ -36,7 +38,7 @@ import unicodedata
 import zipfile
 from urllib.parse import unquote
 
-VERSION = "2.2.0"
+VERSION = "3.0.0"
 # Última versión que cambió algo dentro de los proyectos: los anteriores piden migrar
 VERSION_PROYECTO = "2.1.0"
 
@@ -958,10 +960,18 @@ NOMBRES_CAT = {"pdf": "PDFs", "imagen": "imágenes", "office": "archivos de Offi
 def cmd_estado(args):
     raiz = os.path.abspath(args.raiz)
     texto_claude, _ = leer_texto(os.path.join(raiz, "CLAUDE.md"))
-    configurado = bool(texto_claude and "## brainme" in texto_claude)
+    if es_espacio(texto_claude):
+        print("Esta carpeta es la raíz de un espacio: su panorama sale con BRAIN espacio.")
+        return
+    configurado = es_proyecto(texto_claude)
+    if not configurado and espacio_a_mano(raiz) == raiz:
+        print("Esta carpeta agrupa proyectos brainme: es un espacio armado a mano. Ofrece convertirlo "
+              "(references/espacio.md) en vez de configurarla como proyecto.")
+        return
     print("Proyecto: %s | %s" % (os.path.basename(raiz),
                                  "configurado con brainme" if configurado else "SIN CONFIGURAR"))
     rels = listar_archivos(raiz)
+    estado_espacio(raiz, rels, texto_claude, configurado)
 
     inbox = [r for r in rels if r.startswith("00_inbox/") and not r.startswith("00_inbox/archive/")]
     print("Inbox sin procesar: %d%s" % (len(inbox), (" -> " + ", ".join(
@@ -1594,6 +1604,250 @@ def cmd_consumo(args):
         print("  %s · %d · %s · %s" % (fecha, len(cs), miles(sum(cs) / len(cs)), miles(max(cs))))
 
 
+# --------------------------------------------------------------- espacio
+
+PROYECTOS = "proyectos"
+RE_ANIO = re.compile(r"^\d{4}$")
+RE_SECCION_PROYECTO = re.compile(r"^## brainme[ \t]*$", re.M)
+RE_SECCION_ESPACIO = re.compile(r"^## brainme · espacio[ \t]*$", re.M)
+PLANTILLAS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates")
+
+
+def es_proyecto(texto):
+    return bool(texto and RE_SECCION_PROYECTO.search(texto))
+
+
+def es_espacio(texto):
+    return bool(texto and RE_SECCION_ESPACIO.search(texto))
+
+
+def campo(texto, nombre):
+    """Valor de '**Nombre:** valor', hasta el siguiente ' · **' o el fin de la línea."""
+    m = re.search(r"\*\*%s:\*\*[ \t]*(.*?)(?=[ \t]+·[ \t]+\*\*|[ \t]*$)" % re.escape(nombre),
+                  texto or "", re.M)
+    return m.group(1).strip() if m else ""
+
+
+def prefijo_de(texto):
+    m = re.match(r"`?([A-Za-z0-9_-]+)", campo(texto, "Prefijo de notas"))
+    return m.group(1) if m else ""
+
+
+def general_de(texto_espacio):
+    return campo(texto_espacio, "Contexto general").strip("`/ ")
+
+
+def buscar_espacio(carpeta):
+    """(raíz, texto del CLAUDE.md) del espacio que contiene a carpeta, o (None, None)."""
+    d = carpeta
+    while True:
+        texto = leer_texto(os.path.join(d, "CLAUDE.md"))[0]
+        if es_espacio(texto):
+            return d, texto
+        padre = os.path.dirname(d)
+        if padre == d:
+            return None, None
+        d = padre
+
+
+def proyectos_bajo(carpeta, niveles=2):
+    """Carpetas con un proyecto brainme dentro de carpeta, hasta esos niveles."""
+    hallados = []
+    try:
+        hijos = sorted(os.listdir(carpeta))
+    except OSError:
+        return hallados
+    for h in hijos:
+        ruta = os.path.join(carpeta, h)
+        if h.startswith(".") or h in PROTEGIDAS or not os.path.isdir(ruta):
+            continue
+        if es_proyecto(leer_texto(os.path.join(ruta, "CLAUDE.md"))[0]):
+            hallados.append(ruta)
+        elif niveles > 1:
+            hallados += proyectos_bajo(ruta, niveles - 1)
+    return hallados
+
+
+def espacio_a_mano(carpeta):
+    """La carpeta, o una hasta 3 niveles arriba, con un CLAUDE.md propio y al menos dos
+    proyectos brainme adentro, pero sin la sección de espacio: un espacio armado a mano."""
+    casa, d = os.path.expanduser("~"), carpeta
+    for _ in range(4):
+        if d in (casa, os.path.dirname(d)):
+            return None
+        texto = leer_texto(os.path.join(d, "CLAUDE.md"))[0]
+        if texto and not es_proyecto(texto) and len(proyectos_bajo(d, 3)) >= 2:
+            return d
+        d = os.path.dirname(d)
+    return None
+
+
+def ficha_del_espacio(texto_espacio):
+    """Campos de '### Ficha de cada proyecto', siempre con estado y prefijo."""
+    m = re.search(r"^### Ficha de cada proyecto[ \t]*\n(.*?)(?=^#|\Z)", texto_espacio, re.M | re.S)
+    campos = re.findall(r"^- \*\*(.+?):\*\*", m.group(1), re.M) if m else []
+    for fijo in ("Prefijo de notas", "Estado"):
+        if fijo not in campos:
+            campos.insert(0, fijo)
+    return campos
+
+
+def cmd_crear(args):
+    """Estructura y CLAUDE.md de un proyecto: suelto, contexto general o proyecto de un espacio.
+    Dentro de un espacio, la carpeta se indica desde la raíz del espacio."""
+    raiz = os.path.abspath(args.raiz)
+    base, texto_espacio = buscar_espacio(raiz)
+    destino = os.path.normpath(os.path.join(base or raiz, args.carpeta)) if args.carpeta else raiz
+    nombre = os.path.basename(destino)
+    if not base:
+        base, texto_espacio = buscar_espacio(destino)
+    ficha, prefijo = [], ""
+    if base:
+        general = general_de(texto_espacio)
+        anio = os.path.dirname(destino)
+        if os.path.dirname(anio) == os.path.join(base, PROYECTOS) and RE_ANIO.match(os.path.basename(anio)):
+            prefijo = (args.prefijo or "").strip().strip("`")
+            if not prefijo:
+                print("Un proyecto de un espacio necesita --prefijo para sus notas (por ejemplo, acme-).")
+                sys.exit(1)
+            prefijo += "" if prefijo.endswith("-") else "-"
+            for otro in proyectos_bajo(os.path.join(base, PROYECTOS)):
+                if otro != destino and prefijo_de(leer_texto(os.path.join(otro, "CLAUDE.md"))[0]) == prefijo:
+                    print("El prefijo %s ya lo usa %s: elige otro." % (prefijo, os.path.relpath(otro, base)))
+                    sys.exit(1)
+            ficha = ficha_del_espacio(texto_espacio)
+        elif destino != os.path.join(base, general):
+            print("En el espacio %s, cada proyecto va en %s/<año>/ (por ejemplo, %s/%d/acme-precios) "
+                  "y el contexto general es %s/." % (os.path.basename(base), PROYECTOS, PROYECTOS,
+                                                     datetime.date.today().year, general))
+            sys.exit(1)
+    for c in ESTRUCTURA:
+        os.makedirs(os.path.join(destino, c), exist_ok=True)
+    ruta = os.path.join(destino, "CLAUDE.md")
+    actual, crlf = leer_texto(ruta)
+    if es_proyecto(actual):
+        print("Carpetas listas. %s ya tenía CLAUDE.md con brainme: lo dejé como estaba." % nombre)
+        return
+    texto = (leer_texto(os.path.join(PLANTILLAS, "CLAUDE.md"))[0]
+             .replace("<Nombre del proyecto>", nombre).replace("<nombre de la carpeta>", nombre)
+             .replace("<AAAA-MM-DD>", datetime.date.today().isoformat()))
+    texto = re.sub(r"(\*\*Versi[oó]n:\*\*\s*)[\d.]+", r"\g<1>" + VERSION, texto)
+    if args.trata:
+        texto = re.sub(r"<una o dos frases[^>]*>", lambda m: " ".join(args.trata.split()), texto)
+    if ficha:
+        valores = {"Estado": "activo", "Prefijo de notas": "`%s`" % prefijo}
+        texto = texto.rstrip("\n") + "\n\n## Proyecto\n\n" + "\n".join(
+            "- **%s:** %s" % (c, valores.get(c, "<por completar>")) for c in ficha) + "\n"
+    if actual is not None:
+        texto = actual.rstrip("\n") + "\n\n" + texto[texto.index("## brainme"):]
+    escribir_texto(ruta, texto, crlf)
+    rel = os.path.relpath(destino, base) if base else nombre
+    print("Creé %s: carpetas y CLAUDE.md%s." % (rel, " con su ficha y el prefijo " + prefijo if ficha else ""))
+    pendientes = [c for c in ficha if c not in ("Estado", "Prefijo de notas")]
+    if pendientes:
+        print("Ficha por completar: " + ", ".join(pendientes))
+    if not args.trata:
+        print("Falta «De qué trata» en CLAUDE.md: pídeselo al usuario.")
+
+
+def resumen_de_proyecto(ruta):
+    """(texto del CLAUDE.md, cifras, última entrada de bitácora) sin abrir notas."""
+    texto = leer_texto(os.path.join(ruta, "CLAUDE.md"))[0] or ""
+    rels = listar_archivos(ruta)
+    preguntas = [r for r in rels if r.startswith("03_open_questions/") and "/archive/" not in r
+                 and r.endswith(".md")]
+    inbox = [r for r in rels if r.startswith("00_inbox/")]
+    cifras = [cuantos(len(notas_resumibles(rels)), "nota", "notas"),
+              cuantos(len(preguntas), "pregunta abierta", "preguntas abiertas")]
+    if inbox:
+        cifras.append("inbox %d" % len(inbox))
+    if texto.count("<por completar>"):
+        cifras.append("ficha: %s" % cuantos(texto.count("<por completar>"), "campo por completar",
+                                            "campos por completar"))
+    entradas = entradas_bitacora(leer_texto(os.path.join(ruta, BITACORA))[0])
+    ultima = entradas[-1] if entradas else None
+    return texto, " · ".join(cifras), ultima
+
+
+def linea_ultima(ultima):
+    if not ultima:
+        return "sin bitácora todavía"
+    return "última sesión: %s · %s" % (ultima["fecha"], ultima["linea"][:160])
+
+
+def cmd_espacio(args):
+    raiz = os.path.abspath(args.raiz)
+    base, texto = buscar_espacio(raiz)
+    if not base:
+        a_mano = espacio_a_mano(raiz)
+        if not a_mano:
+            print("Esta carpeta no está dentro de un espacio brainme.")
+            return
+        print("Espacio armado a mano, sin la sección de brainme: %s" % a_mano)
+        print("Proyectos brainme adentro: " + ", ".join(os.path.relpath(p, a_mano) for p in proyectos_bajo(a_mano, 3)))
+        print("Para convertirlo: references/espacio.md, parte «Convertir un espacio armado a mano».")
+        return
+    general = general_de(texto)
+    print("Espacio: %s · contexto general: %s/" % (campo(texto, "Espacio") or os.path.basename(base), general))
+    if es_proyecto(leer_texto(os.path.join(base, general, "CLAUDE.md"))[0]):
+        _, cifras, ultima = resumen_de_proyecto(os.path.join(base, general))
+        print("Contexto general: %s\n  %s" % (cifras, linea_ultima(ultima)))
+    else:
+        print("Contexto general: sin crear (BRAIN crear %s)" % general)
+    carpeta = os.path.join(base, PROYECTOS)
+    filas, cerrados, fuera = [], [], []
+    for anio in sorted(os.listdir(carpeta)) if os.path.isdir(carpeta) else []:
+        ruta_anio = os.path.join(carpeta, anio)
+        if anio.startswith(".") or not os.path.isdir(ruta_anio):
+            continue
+        if not RE_ANIO.match(anio):
+            fuera.append(anio)
+            continue
+        for h in sorted(os.listdir(ruta_anio)):
+            ruta, rel = os.path.join(ruta_anio, h), anio + "/" + h
+            if h.startswith(".") or not os.path.isdir(ruta):
+                continue
+            if not es_proyecto(leer_texto(os.path.join(ruta, "CLAUDE.md"))[0]):
+                fuera.append(rel)
+                continue
+            ficha, cifras, ultima = resumen_de_proyecto(ruta)
+            estado = campo(ficha, "Estado") or "sin estado en la ficha"
+            if estado.startswith("cerrado"):
+                cerrados.append(rel)
+                continue
+            filas.append(((ultima or {}).get("fecha", ""), rel, "- %s · %s · %s%s\n  %s\n  %s" % (
+                rel, prefijo_de(ficha) or "sin prefijo", campo(ficha, "De qué trata")[:140],
+                "" if estado == "activo" else " [%s]" % estado, cifras, linea_ultima(ultima))))
+    filas.sort(key=lambda f: (f[0], f[1]), reverse=True)
+    print("Proyectos abiertos (%d), el más reciente primero:" % len(filas) if filas else
+          "Proyectos abiertos: ninguno (di «nuevo proyecto: <nombre>»).")
+    for _, _, fila in filas:
+        print(fila)
+    if cerrados:
+        print("Cerrados (%d): %s" % (len(cerrados), ", ".join(cerrados)))
+    if fuera:
+        print("En %s/, fuera de <año>/<proyecto> o sin brainme: %s" % (PROYECTOS, ", ".join(fuera)))
+
+
+def estado_espacio(raiz, rels, texto_claude, configurado):
+    """Línea del espacio en BRAIN estado: a qué espacio pertenece y notas sin prefijo."""
+    base, texto = buscar_espacio(raiz)
+    if not base:
+        a_mano = espacio_a_mano(raiz) if configurado else None
+        if a_mano:
+            print("Espacio armado a mano: %s, con este y otros proyectos brainme adentro. Ofrece "
+                  "convertirlo (references/espacio.md)." % os.path.relpath(a_mano, raiz))
+        return
+    prefijo = prefijo_de(texto_claude)
+    general = raiz == os.path.join(base, general_de(texto))
+    print("Espacio: %s · %s" % (campo(texto, "Espacio") or os.path.basename(base),
+                                "este es su contexto general" if general else
+                                "proyecto con prefijo %s" % prefijo if prefijo else "proyecto sin prefijo en su ficha"))
+    if prefijo:
+        sin = [r for r in notas_resumibles(rels) if not nombre_nota(r).lower().startswith(prefijo.lower())]
+        if sin:
+            print("Notas sin el prefijo %s: %d -> %s" % (prefijo, len(sin), lista_notas(sin, 6)))
+
 # --------------------------------------------------------------- migrar
 
 LINEAS_IGNORE = ["bitacora.md", "**/_versiones/", "_taller/"]
@@ -1762,7 +2016,7 @@ def cmd_migrar(args):
         print("Migración deshecha: %s restaurados." % ", ".join(reg["copias"] or ["nada"]))
         return
     claude_md = leer_texto(os.path.join(raiz, "CLAUDE.md"))[0] or ""
-    if "## brainme" not in claude_md:
+    if not es_proyecto(claude_md):
         print("Esta carpeta no está configurada con brainme (falta ## brainme en CLAUDE.md).")
         sys.exit(1)
     cambios = revisar_migracion(raiz)
@@ -1877,6 +2131,11 @@ def main():
     mi.add_argument("--deshacer", action="store_true")
     ve = sub.add_parser("versiones")
     ve.add_argument("--plan", help="ruta del plan para BRAIN mover")
+    sub.add_parser("espacio")
+    cr = sub.add_parser("crear")
+    cr.add_argument("carpeta", nargs="?", help="por defecto, la actual; en un espacio, desde su raíz")
+    cr.add_argument("--prefijo", help="prefijo de las notas (proyectos de un espacio)")
+    cr.add_argument("--trata", help="de qué trata, en una o dos frases")
     sub.add_parser("version")
     args = p.parse_args()
     comandos = {"sincroniza": cmd_sincroniza, "estado": cmd_estado, "mapa": cmd_mapa, "nombres": cmd_nombres, "inventario": cmd_inventario, "respaldo": cmd_respaldo, "mover": cmd_mover,
@@ -1884,7 +2143,8 @@ def main():
                 "a-wikilinks": cmd_a_wikilinks, "sin-resumen": cmd_sin_resumen,
                 "poner-resumenes": cmd_poner_resumenes, "autor": cmd_autor,
                 "bitacora": cmd_bitacora, "consumo": cmd_consumo, "migrar": cmd_migrar,
-                "versiones": cmd_versiones, "version": lambda a: print(VERSION)}
+                "versiones": cmd_versiones, "espacio": cmd_espacio, "crear": cmd_crear,
+                "version": lambda a: print(VERSION)}
     if args.cmd not in comandos:
         p.print_help()
         sys.exit(1)
