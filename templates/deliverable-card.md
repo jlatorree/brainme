@@ -2,8 +2,8 @@
 titulo: "<Nombre del entregable>"
 tipo: entregable
 formato: <informe html | diagrama | excel | word | keynote | pptx | figma | otro>
-archivo: "<05_exports/<subcarpeta>/nombre-v1.ext>"
-pdf: "<05_exports/presentations/nombre-v1.pdf o no aplica>"
+archivo: "<05_exports/<tipo>/<entregable>/<entregable>-v1.ext>"
+pdf: "<05_exports/<tipo>/<entregable>/<entregable>-v1.pdf o no aplica>"
 version: <v1>
 fecha: <AAAA-MM-DD>
 estado: <borrador | en revisión | final>
@@ -17,16 +17,18 @@ relacionadas: ["[[decision-que-lo-sustenta]]", "[[fuente-que-lo-sustenta]]"]
 
 <!--
 Instrucciones de la plantilla (bórralas al crear la ficha):
-- La ficha vive junto al archivo y se llama igual, con .md
-  (diagrama-journey-v2.png tiene su ficha diagrama-journey-v2.md).
-- Los links a los archivos van relativos, solo con el nombre, porque están en la
-  misma carpeta.
+- Una ficha por entregable, en su carpeta y con su nombre sin versión
+  (diagrama-journey/diagrama-journey.md).
+- Con cada versión nueva, actualiza archivo, pdf y version, y agrega una fila al
+  historial. Las versiones anteriores quedan en versiones/.
+- Los links a los archivos van relativos: solo el nombre para la vigente, que está en
+  la misma carpeta.
 - Quita todos los placeholders <...>.
 -->
 
 # <Nombre del entregable>
 
-**Archivo:** [<nombre-v1.ext>](<nombre-v1.ext>) · **PDF indexable:** [<nombre-v1.pdf>](<nombre-v1.pdf>)
+**Archivo:** [<entregable-v1.ext>](<entregable-v1.ext>) · **PDF indexable:** [<entregable-v1.pdf>](<entregable-v1.pdf>)
 
 ## Qué es
 Una o dos frases: qué contiene, para quién y para qué decisión o momento del

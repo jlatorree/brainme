@@ -56,7 +56,7 @@ proyecto.
   ~15.000 tokens más la lectura, así que va una vez al cerrar el bloque de trabajo,
   cuando `BRAIN estado` la recomienda o el usuario la pide.
 - **Buscar:** con texto, en títulos, `resumen` y contenido
-  (`grep -rl --exclude-dir={_versiones,_taller,.brainme,graphify-out} ...`). Lee el
+  (`grep -rl --exclude-dir={versiones,_versiones,_taller,.brainme,graphify-out} ...`). Lee el
   `resumen` antes de abrir una nota completa.
 - **Bitácora:** `bitacora.md`, en la raíz. Una línea por cada flujo terminado, firmada
   con `BRAIN autor`, y los handoffs. Así cualquiera, también otra persona, sabe qué pasó
@@ -69,7 +69,7 @@ proyecto.
   el plugin, usa un subagente general con ese modelo, ese esfuerzo y las instrucciones de
   `agents/`.
 - **Lectura acotada:** de HTML, decks, scripts, CSV grandes y respaldos, lee su ficha o
-  las primeras líneas. `_versiones/` y `_taller/` se abren solo a pedido del usuario.
+  las primeras líneas. `versiones/` y `_taller/` se abren solo a pedido del usuario.
 - **Índice de nombres:** `BRAIN nombres` lista todas las notas por carpeta en pocas
   líneas. Detecta duplicados con él antes de crear notas.
 - **Mover, no borrar:** lo procesado se mueve (a su carpeta o a un respaldo en
@@ -94,8 +94,9 @@ proyecto.
   archive/                preguntas graduadas
 04_sources/literature/    una ficha por paper (+ su PDF si lo hay)
 04_sources/web/           fichas de fuentes web
-05_exports/               entregables: reports/, diagrams/, data/, presentations/ (con fichas)
-  */_versiones/           versiones anteriores de cada entregable
+05_exports/<tipo>/        entregables; reports/, presentations/, diagrams/ o data/ aparece con el primero
+  <entregable>/           uno por carpeta: versión vigente y ficha a la vista
+    versiones/            versiones anteriores (fuera de búsquedas y del mapa)
 CLAUDE.md                 hace que cada sesión en la carpeta use brainme
 bitacora.md               qué se hizo en cada sesión, quién y qué sigue, y los handoffs
 _taller/                  generadores y scripts de entregables (fuera de búsquedas y del mapa)

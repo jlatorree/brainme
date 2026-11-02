@@ -117,14 +117,16 @@ Activa el auto-update una vez: `/plugin` → **Marketplaces** → **brainme**. O
 02_decisions/             decisiones, su porqué y alternativas descartadas
 03_open_questions/        una pregunta por archivo (archive/ para las graduadas)
 04_sources/               literature/ (fichas de papers + PDFs) y web/
-05_exports/               entregables: reports/, diagrams/, data/, presentations/
+05_exports/               entregables: una carpeta por cada uno, dentro de reports/,
+                          presentations/, diagrams/ o data/ (aparecen con el primero)
 CLAUDE.md                 hace que cada sesión arranque con brainme
 bitacora.md               qué se hizo en cada sesión, quién y qué sigue
 _taller/                  generadores de entregables (fuera de búsquedas y del mapa)
 .brainme/                respaldos, inbox procesado y registros (oculto)
 ```
 
-Las versiones anteriores de un entregable pasan a `_versiones/`, dentro de su carpeta.
+Cada entregable muestra su versión vigente y su ficha; las anteriores quedan en su
+carpeta `versiones/`.
 
 - **Nota** (`01`–`03`): lo que *sabes*. Viva, se amplía.
 - **Fuente** (`04`): lo que *leíste*, con su cita y hallazgos.

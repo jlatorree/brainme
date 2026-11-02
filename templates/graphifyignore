@@ -36,7 +36,7 @@ docs/
 *.key
 *.pptx
 
-# 8. Bitácora, versiones viejas de entregables y generadores (brainme 2.1)
+# 8. Bitácora, versiones viejas de entregables y generadores
 bitacora.md
-**/_versiones/
+05_exports/**/versiones/
 _taller/

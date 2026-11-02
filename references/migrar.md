@@ -8,7 +8,8 @@ texto de ninguna nota y se puede deshacer.
 resumen", y el usuario recibió el resumen final.
 
 1. **Revisa:** `BRAIN migrar`. Muestra los cambios automáticos y lo que harán los
-   ayudantes: resúmenes que faltan, versiones viejas de entregables y autor.
+   ayudantes: resúmenes que faltan, entregables por ordenar y autor. Si hay entregables
+   por ordenar, corre también `BRAIN versiones` para ver lo que hay que preguntar.
 2. **Un solo OK.** Explícale al usuario en simple qué cambia, por ejemplo:
 
    ```
@@ -16,18 +17,23 @@ resumen", y el usuario recibió el resumen final.
    - Anoto la versión en CLAUDE.md y creo la bitácora (bitacora.md).
    - Quito un aviso de Graphify pensado para código que gasta tokens en cada búsqueda.
    - Escribo un resumen corto en las 153 notas que no tienen. No cambio su texto.
-   - Muevo 12 versiones viejas de entregables a _versiones/, junto a la versión vigente.
+   - Doy a cada entregable su carpeta: la versión vigente a la vista y las 12 anteriores
+     en versiones/. Las carpetas vacías de 05_exports aparecen con su primer entregable.
    Antes hago un respaldo, y todo se puede deshacer. ¿Sigo?
    ```
 
-   Si dice que no, sigue con lo que pidió.
+   En el mismo mensaje van las preguntas de `BRAIN versiones` (a qué entregable va un
+   archivo con nombre libre; si una carpeta propia guarda versiones viejas). Si dice que
+   no, sigue con lo que pidió.
 3. **Respaldo:** `BRAIN respaldo`.
 4. **Cambios automáticos:** `BRAIN migrar --aplicar`.
 5. **Autor:** si `BRAIN autor` dice "no definido", pregúntale su nombre y córrelo con el
    nombre: `BRAIN autor "Nombre"`.
-6. **Versiones viejas:** `BRAIN versiones --plan .brainme/plan-versiones.json` y después
-   `BRAIN mover --plan .brainme/plan-versiones.json`. Los wikilinks siguen funcionando,
-   porque van por nombre.
+6. **Entregables:** `BRAIN versiones --plan .brainme/plan-versiones.json` (con
+   `--archivar <carpeta>` si el usuario lo aprobó), ajusta en el plan los destinos que
+   respondió y `BRAIN mover --plan .brainme/plan-versiones.json`. Los enlaces se
+   corrigen solos, también los que apuntan a una ficha que pasa a llamarse como su
+   entregable. Después, actualiza en cada ficha `archivo` y `version` con la vigente.
 7. **Resúmenes:** `BRAIN sin-resumen --lotes` escribe lotes de 25 notas en
    `.brainme/resumenes/`. Por cada lote, lanza el ayudante `brainme:resumidor` con la
    carpeta del proyecto y la ruta del lote, hasta 3 a la vez. Si el ayudante no existe
@@ -37,5 +43,5 @@ resumen", y el usuario recibió el resumen final.
 8. **Sincroniza** y anota en la bitácora: `BRAIN bitacora "Pasé el proyecto a brainme
    <versión>"`.
 9. **Cuéntale en simple** qué cambió. Para deshacer: `BRAIN migrar --deshacer` (archivos
-   de configuración) y `BRAIN deshacer` (versiones movidas). Los resúmenes quedan, porque
+   de configuración) y `BRAIN deshacer` (entregables movidos). Los resúmenes quedan, porque
    no cambian el texto.

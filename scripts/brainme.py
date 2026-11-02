@@ -19,7 +19,7 @@ Subcomandos (se corren desde la raíz del proyecto):
   bitacora     agrega o muestra entradas de bitacora.md (incluidos los handoffs)
   consumo      tokens de contexto por respuesta, leídos de los registros de Claude Code
   migrar       revisa y aplica lo que le falta a un proyecto de una versión anterior
-  versiones    plan para llevar versiones viejas de entregables a _versiones/
+  versiones    plan para dar a cada entregable su carpeta, con las versiones anteriores en versiones/
   espacio      panorama de un espacio: contexto general y proyectos, sin abrir notas
   crear        carpetas y CLAUDE.md de un proyecto (suelto, contexto general o de un espacio)
 
@@ -38,14 +38,14 @@ import unicodedata
 import zipfile
 from urllib.parse import unquote
 
-VERSION = "3.0.0"
+VERSION = "3.1.0"
 # Última versión que cambió algo dentro de los proyectos: los anteriores piden migrar
-VERSION_PROYECTO = "2.1.0"
+VERSION_PROYECTO = "3.1.0"
 
+# Las carpetas de 05_exports (reports/, presentations/...) aparecen con su primer entregable
 ESTRUCTURA = [
     "00_inbox", "01_knowledge", "02_decisions", "03_open_questions/archive",
-    "04_sources/literature", "04_sources/web", "05_exports/reports",
-    "05_exports/diagrams", "05_exports/data", "05_exports/presentations",
+    "04_sources/literature", "04_sources/web", "05_exports",
 ]
 RAICES_ESTRUCTURA = {"00_inbox", "01_knowledge", "02_decisions", "03_open_questions",
                      "04_sources", "05_exports"}
@@ -56,8 +56,10 @@ PROTEGIDAS = {".git", ".obsidian", ".trash", ".claude", ".brainme", "graphify-ou
 SE_QUEDAN_RAIZ = {"claude.md", "readme.md", "agents.md", ".graphifyignore", ".gitignore",
                   "bitacora.md"}
 CARPETAS_QUE_SE_QUEDAN = {"docs", "_taller"}
-# Versiones viejas de entregables y generadores: fuera del índice, las búsquedas y el grafo
+# Versiones viejas de entregables y generadores: fuera del índice, las búsquedas y el grafo.
+# Las versiones viven en 05_exports/<tipo>/<entregable>/versiones/ (_versiones/ es de 3.0)
 APARTE = {"_versiones", "_taller"}
+VERSIONES = "versiones"
 IGNORAR_ARCHIVOS = {".ds_store", "icon\r"}
 
 CATEGORIAS = {
@@ -1282,7 +1284,9 @@ TAMANO_LOTE = 25
 
 
 def aparte(rel):
-    return any(p in APARTE for p in rel.split("/")[:-1])
+    carpetas = rel.split("/")[:-1]
+    return any(p in APARTE for p in carpetas) or (
+        carpetas[:1] == ["05_exports"] and VERSIONES in carpetas)
 
 
 def notas_resumibles(rels):
@@ -1850,7 +1854,19 @@ def estado_espacio(raiz, rels, texto_claude, configurado):
 
 # --------------------------------------------------------------- migrar
 
-LINEAS_IGNORE = ["bitacora.md", "**/_versiones/", "_taller/"]
+LINEAS_IGNORE = ["bitacora.md", "05_exports/**/versiones/", "_taller/"]
+
+
+def exports_vacias(raiz):
+    """Carpetas de 05_exports sin ningún archivo: vuelven a aparecer con su primer entregable."""
+    base = os.path.join(raiz, "05_exports")
+    vacias = []
+    for c in sorted(os.listdir(base)) if os.path.isdir(base) else []:
+        ruta = os.path.join(base, c)
+        if os.path.isdir(ruta) and not c.startswith(".") and not any(
+                a.lower() not in IGNORAR_ARCHIVOS for _, _, archivos in os.walk(ruta) for a in archivos):
+            vacias.append("05_exports/" + c)
+    return vacias
 
 
 def version_del_proyecto(texto):
@@ -1913,6 +1929,10 @@ def revisar_migracion(raiz):
         faltan = [l for l in LINEAS_IGNORE if l not in ignore.split("\n")]
         if faltan:
             cambios.append(("graphifyignore", "Agregar a .graphifyignore: " + ", ".join(faltan)))
+    vacias = exports_vacias(raiz)
+    if vacias:
+        cambios.append(("exports_vacias", "Quitar de 05_exports las carpetas vacías (%s): aparecen con su "
+                        "primer entregable" % ", ".join(c.split("/", 1)[1] + "/" for c in vacias)))
     return cambios
 
 
@@ -1952,41 +1972,113 @@ def aplicar_cambio(raiz, clave_cambio):
         ruta = os.path.join(raiz, ".graphifyignore")
         texto, crlf = leer_texto(ruta)
         faltan = [l for l in LINEAS_IGNORE if l not in texto.split("\n")]
-        texto = texto.rstrip("\n") + "\n\n# brainme 2.1: bitácora, versiones viejas y generadores\n" + \
+        texto = texto.rstrip("\n") + "\n\n# brainme: bitácora, versiones viejas y generadores\n" + \
             "\n".join(faltan) + "\n"
         escribir_texto(ruta, texto, crlf)
+    elif clave_cambio == "exports_vacias":
+        for rel in exports_vacias(raiz):
+            shutil.rmtree(os.path.join(raiz, rel))
 
 
-def versiones_viejas(rels):
-    """Entregables en 05_exports con una versión más nueva en la misma carpeta."""
-    grupos = {}
+def version_de(nombre):
+    m = RE_VERSION_ARCHIVO.match(nombre)
+    return int(m.group("n")) if m else None
+
+
+def base_de(nombre):
+    """Nombre del entregable: el del archivo sin versión ni extensión."""
+    m = RE_VERSION_ARCHIVO.match(nombre)
+    return m.group("base") if m else os.path.splitext(nombre)[0]
+
+
+def plan_entregables(rels, archivar=()):
+    """Cada entregable en 05_exports/<tipo>/<entregable>/: la versión vigente y su ficha
+    (<entregable>.md) a la vista, las anteriores en versiones/. Agrupa por nombre sin versión.
+    Devuelve (movimientos, grupos {carpeta: [destinos]}, por revisar, carpetas propias, sin tipo)."""
+    grupos, propias, sin_tipo = {}, {}, []
     for r in rels:
-        if not r.startswith("05_exports/") or aparte(r):
+        partes = r.split("/")
+        if partes[0] != "05_exports":
             continue
-        m = RE_VERSION_ARCHIVO.match(r.rsplit("/", 1)[-1])
-        if m:
-            k = (carpeta_de(r), m.group("base"), m.group("resto") or "", m.group("ext").lower())
-            grupos.setdefault(k, []).append((int(m.group("n")), r))
-    viejas = []
-    for lista in grupos.values():
-        lista.sort()
-        viejas += [r for _, r in lista[:-1]]
-    return sorted(viejas)
+        if len(partes) == 2:
+            sin_tipo.append(r)
+            continue
+        tipo, dentro, archivo = partes[1], partes[2:-1], partes[-1]
+        if not dentro:                                    # suelto en <tipo>/
+            nombre, sub, vieja = base_de(archivo), [], False
+        elif dentro[0] == "_versiones":                   # versiones apartadas por brainme 3.0
+            nombre, sub, vieja = base_de(archivo), dentro[1:], True
+        elif len(dentro) == 1:                            # ya en la carpeta del entregable
+            nombre, sub, vieja = dentro[0], [], False
+        elif dentro[1] in (VERSIONES, "_versiones") or dentro[1] in archivar:
+            nombre, sub, vieja = dentro[0], dentro[2:], True
+        else:                                             # carpeta del usuario dentro del entregable
+            c = "/".join(partes[:4])
+            propias[c] = propias.get(c, 0) + 1
+            continue
+        grupos.setdefault((tipo, nombre), []).append((r, archivo, sub, vieja))
+
+    movimientos, resumen, revisar = [], {}, []
+    for (tipo, nombre), items in sorted(grupos.items()):
+        carpeta = "05_exports/%s/%s" % (tipo, nombre)
+        vigente = max([version_de(a) for _, a, _, v in items if not v and version_de(a) is not None],
+                      default=None)
+        tallos = {}
+        for _, a, _, _ in items:
+            tallos[os.path.splitext(a)[0]] = tallos.get(os.path.splitext(a)[0], 0) + 1
+        # Ficha: <entregable>.md; si no hay, el .md más nuevo que acompaña a un archivo de su
+        # mismo nombre pasa a serlo
+        nombre_ficha = nombre + ".md"
+        ficha = next((r for r, a, _, v in items if a == nombre_ficha and not v), None)
+        if not ficha:
+            fichas = sorted((version_de(a) or 0, r) for r, a, _, _ in items
+                            if a.endswith(".md") and tallos[os.path.splitext(a)[0]] > 1)
+            ficha = fichas[-1][1] if fichas else None
+        for r, a, sub, vieja in items:
+            n = version_de(a)
+            if r == ficha:
+                destino = "%s/%s" % (carpeta, nombre_ficha)
+            elif vieja or (n is not None and vigente is not None and n < vigente):
+                destino = "/".join([carpeta, VERSIONES] + sub + [a])
+            else:
+                destino = "%s/%s" % (carpeta, a)
+            resumen.setdefault(carpeta, []).append(destino)
+            if destino != r:
+                movimientos.append({"de": r, "a": destino})
+                if len(items) == 1 and n is None and not re.match(r"^[a-z0-9._-]+$", nombre):
+                    revisar.append(r)
+    return movimientos, resumen, revisar, propias, sin_tipo
 
 
 def cmd_versiones(args):
     raiz = os.path.abspath(args.raiz)
-    viejas = versiones_viejas(listar_archivos(raiz))
-    if not viejas:
-        print("No hay versiones viejas sueltas en 05_exports.")
-        return
-    print("Versiones viejas con una versión más nueva al lado: %d" % len(viejas))
-    for r in viejas[:15]:
-        print("  " + r)
-    if len(viejas) > 15:
-        print("  ... y %d más" % (len(viejas) - 15))
-    if args.plan:
-        plan = {"movimientos": [{"de": r, "a": carpeta_de(r) + "/_versiones/"} for r in viejas]}
+    movimientos, resumen, revisar, propias, sin_tipo = plan_entregables(
+        listar_archivos(raiz), tuple(args.archivar or ()))
+    tocadas = sorted({carpeta_de(m["a"]).split("/" + VERSIONES)[0] for m in movimientos})
+    if not movimientos:
+        print("Los entregables de 05_exports ya están cada uno en su carpeta.")
+    else:
+        print("Entregables por ordenar: %d archivos en %d carpetas" % (len(movimientos), len(tocadas)))
+        for c in tocadas[:15]:
+            destinos = resumen[c]
+            vista = [d for d in destinos if carpeta_de(d) == c]
+            print("  %s/: %d a la vista, %d en %s/" % (
+                c[len("05_exports/"):], len(vista), len(destinos) - len(vista), VERSIONES))
+        if len(tocadas) > 15:
+            print("  ... y %d más" % (len(tocadas) - 15))
+    if revisar:
+        print("Revisa con el usuario (sin versión ni archivos hermanos; por defecto, carpeta propia):")
+        for r in revisar:
+            print("  " + r)
+    if propias:
+        print("Carpetas propias dentro de un entregable (se quedan; con --archivar <nombre> pasan a %s/):"
+              % VERSIONES)
+        for c, n in sorted(propias.items()):
+            print("  %s/ (%s)" % (c, cuantos(n, "archivo", "archivos")))
+    if sin_tipo:
+        print("Sueltos en 05_exports/, sin carpeta de tipo: " + ", ".join(sin_tipo))
+    if args.plan and movimientos:
+        plan = {"movimientos": movimientos}
         os.makedirs(os.path.dirname(os.path.join(raiz, args.plan)) or raiz, exist_ok=True)
         with open(os.path.join(raiz, args.plan), "w", encoding="utf-8") as f:
             json.dump(plan, f, ensure_ascii=False, indent=1)
@@ -2012,6 +2104,8 @@ def cmd_migrar(args):
                 os.remove(ruta)
             elif os.path.exists(ruta):
                 print("Dejo %s porque ya tiene entradas." % rel)
+        for rel in reg.get("carpetas_quitadas", []):
+            os.makedirs(os.path.join(raiz, rel), exist_ok=True)
         shutil.rmtree(carpeta)
         print("Migración deshecha: %s restaurados." % ", ".join(reg["copias"] or ["nada"]))
         return
@@ -2029,7 +2123,8 @@ def cmd_migrar(args):
             print("  - " + desc)
         print("Con ayudantes, después:")
         print("  - Notas sin resumen: %d (ayudante de resúmenes)" % len(notas_sin_resumen(raiz, rels)))
-        print("  - Versiones viejas sueltas en 05_exports: %d (BRAIN versiones)" % len(versiones_viejas(rels)))
+        print("  - Entregables por ordenar en 05_exports: %d archivos (BRAIN versiones)"
+              % len(plan_entregables(rels)[0]))
         if not leer_config().get("autor"):
             print("  - Autor de este computador: no definido (BRAIN autor)")
         return
@@ -2038,6 +2133,7 @@ def cmd_migrar(args):
         return
     carpeta = os.path.join(base, ahora())
     copias, creados = [], []
+    quitadas = exports_vacias(raiz) if any(k == "exports_vacias" for k, _ in cambios) else []
     for rel in ("CLAUDE.md", ".claude/settings.json", ".graphifyignore"):
         if os.path.exists(os.path.join(raiz, rel)):
             os.makedirs(os.path.dirname(os.path.join(carpeta, "originales", rel)), exist_ok=True)
@@ -2050,7 +2146,7 @@ def cmd_migrar(args):
         print("  ✓ " + desc)
     with open(os.path.join(carpeta, "registro.json"), "w", encoding="utf-8") as f:
         json.dump({"version": VERSION, "cambios": [k for k, _ in cambios], "copias": copias,
-                   "creados": creados}, f, ensure_ascii=False, indent=1)
+                   "creados": creados, "carpetas_quitadas": quitadas}, f, ensure_ascii=False, indent=1)
     print("Migración aplicada. Para deshacerla: BRAIN migrar --deshacer")
 
 
@@ -2078,9 +2174,9 @@ def estado_21(raiz, rels, texto_claude, configurado):
         re.sub(r" \d+(\.[A-Za-z0-9]+)$", r"\1", r)) in existentes]
     if conflictos:
         print("Copias en conflicto de iCloud: %d -> %s" % (len(conflictos), ", ".join(conflictos[:6])))
-    viejas = versiones_viejas(rels)
-    if viejas:
-        print("Versiones viejas sueltas en 05_exports: %d (BRAIN versiones)" % len(viejas))
+    por_ordenar = plan_entregables(rels)[0]
+    if por_ordenar:
+        print("Entregables por ordenar en 05_exports: %d archivos (BRAIN versiones)" % len(por_ordenar))
     entradas = entradas_bitacora(leer_texto(os.path.join(raiz, BITACORA))[0])
     if entradas:
         print("Bitácora (últimas %d):" % min(3, len(entradas)))
@@ -2131,6 +2227,8 @@ def main():
     mi.add_argument("--deshacer", action="store_true")
     ve = sub.add_parser("versiones")
     ve.add_argument("--plan", help="ruta del plan para BRAIN mover")
+    ve.add_argument("--archivar", action="append", metavar="CARPETA",
+                    help="carpeta propia de un entregable cuyo contenido pasa a versiones/ (repetible)")
     sub.add_parser("espacio")
     cr = sub.add_parser("crear")
     cr.add_argument("carpeta", nargs="?", help="por defecto, la actual; en un espacio, desde su raíz")

@@ -28,8 +28,8 @@ en `.brainme/`, fuera del mapa.
    | Notas de reunión, notas largas con varias ideas, borradores, apuntes | `00_inbox/` (después se procesan con el flujo 2) |
    | Resumen de un paper o PDF académico | `04_sources/literature/` (a un PDF sin ficha, ofrécele crearla: la ficha es lo que entra al mapa) |
    | Recorte o ficha de una página web | `04_sources/web/` |
-   | Informe, documento de trabajo o entregable (también versiones finales ya enviadas) | `05_exports/<reports, diagrams, data o presentations>/` |
-   | Canvas de Obsidian (`.canvas`) | `05_exports/diagrams/` |
+   | Informe, documento de trabajo o entregable (también versiones finales ya enviadas) | `05_exports/<reports, diagrams, data o presentations>/<entregable>/`, una carpeta por entregable con su nombre sin versión |
+   | Canvas de Obsidian (`.canvas`) | `05_exports/diagrams/<canvas>/` |
    | Adjunto: imagen o PDF que una nota incrusta ("usado por" mayor que 0) | La misma carpeta que la nota que lo usa |
       | Algo que no sabes qué es (código, zips, formatos raros) | Se queda donde está; pregunta |
 
@@ -54,7 +54,7 @@ en `.brainme/`, fuera del mapa.
        {"de": "Reuniones/2024-05-02 Kickoff.md", "a": "00_inbox/", "tags": ["reuniones"]},
        {"de": "Ideas/precio por uso.md", "a": "01_knowledge/", "frontmatter": {"tipo": "conocimiento"}, "tags": ["ideas"]},
        {"de": "Cliente A/ideas.md", "a": "00_inbox/ideas-cliente-a.md", "tags": ["cliente-a"]},
-       {"de": "diagrama journey.png", "a": "05_exports/diagrams/"}
+       {"de": "diagrama journey.png", "a": "05_exports/diagrams/diagrama-journey/"}
      ]
    }
    ```
@@ -69,7 +69,9 @@ en `.brainme/`, fuera del mapa.
    la nota cambia de carpeta.
 7. **Verifica** con la línea "Enlaces rotos" de `mover` (los rotos previos suelen ser
    notas que el usuario aún no creó; se dejan como están) y resuelve los nombres
-   repetidos que reporte. `BRAIN verificar` repite el chequeo cuando quieras.
+   repetidos que reporte. `BRAIN verificar` repite el chequeo cuando quieras. Si
+   llegaron varias versiones de un entregable, ordénalas como en
+   `references/entregables.md` («Ordenar»).
 8. **Sincroniza.** Si es la primera vez y hay PDFs, imágenes u Office, ofrece la
    lectura profunda (o Graphify, si el proyecto no lo usa) diciendo cuántos archivos son.
 9. **Cuéntale en simple:** cuántos archivos ordenó y dónde, cuántos enlaces corrigió,

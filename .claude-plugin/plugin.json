@@ -1,6 +1,6 @@
 {
   "name": "brainme",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "Segundo cerebro de proyectos en carpetas de notas markdown (ideal para Obsidian): configura y ordena la carpeta, procesa el inbox en notas atómicas conectadas, gestiona preguntas y decisiones, guarda la investigación de literatura con doble cita y organiza entregables. Con el modo espacio, varios proyectos comparten un contexto general y sus reglas. Gasta pocos tokens: resumen en cada nota, ayudantes con el modelo justo y handoff a una sesión nueva.",
   "author": {
     "name": "Jonathan Latorre",

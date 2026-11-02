@@ -5,7 +5,7 @@
 Espacio gestionado con el skill **brainme** (invócalo al empezar cada sesión): un
 contexto general y un proyecto por carpeta en `proyectos/<año>/`.
 
-**Espacio:** <nombre> · **De qué trata:** <una o dos frases> · **Contexto general:** `<carpeta>/` · **Configurado con brainme:** <AAAA-MM-DD> · **Versión:** 3.0.0
+**Espacio:** <nombre> · **De qué trata:** <una o dos frases> · **Contexto general:** `<carpeta>/` · **Configurado con brainme:** <AAAA-MM-DD> · **Versión:** 3.1.0
 
 - **Una sesión, un proyecto.** Trabaja con la carpeta donde se abrió la sesión y con el
   contexto general. Otro proyecto de `proyectos/` se lee, se busca o se enlaza solo si

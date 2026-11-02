@@ -30,6 +30,11 @@ ARCHIVOS = {
                                        "---\n\nCuerpo [[idea-central]] [[idea-central]].\n",
     "05_exports/reports/informe-v1.md": "v1\n",
     "05_exports/reports/informe-v2.md": "v2\n",
+    "05_exports/presentations/deck-v1.html": "<html></html>\n",
+    "05_exports/presentations/deck-v1.md": "---\ntipo: entregable\nresumen: \"Ficha del deck.\"\n---\n\nFicha del deck.\n",
+    "05_exports/presentations/deck-v2.html": "<html></html>\n",
+    "05_exports/presentations/_versiones/deck-v0.html": "<html></html>\n",
+    "05_exports/data/.DS_Store": "",
 }
 
 
@@ -60,18 +65,20 @@ class BrainmeTest(unittest.TestCase):
 
     def test_migrar_aplica_y_deshace(self):
         salida = self.brain("migrar")
-        self.assertIn("Cambios automáticos (BRAIN migrar --aplicar): 5", salida)
+        self.assertIn("Cambios automáticos (BRAIN migrar --aplicar): 6", salida)
         self.brain("migrar", "--aplicar")
         claude_md = self.leer("CLAUDE.md")
-        self.assertTrue(claude_md.endswith("**Configurado con brainme:** 2026-01-01 · **Versión:** 3.0.0\n"))
+        self.assertTrue(claude_md.endswith("**Configurado con brainme:** 2026-01-01 · **Versión:** 3.1.0\n"))
         self.assertNotIn("## graphify", claude_md)
         self.assertEqual(json.loads(self.leer(".claude/settings.json")), {})
-        self.assertIn("**/_versiones/", self.leer(".graphifyignore"))
+        self.assertIn("05_exports/**/versiones/", self.leer(".graphifyignore"))
+        self.assertFalse(os.path.exists(os.path.join(self.raiz, "05_exports/data")))
         self.assertTrue(os.path.exists(os.path.join(self.raiz, "bitacora.md")))
         self.assertIn("No hay cambios automáticos", self.brain("migrar", "--aplicar"))
         self.brain("migrar", "--deshacer")
         self.assertEqual(self.leer("CLAUDE.md"), ARCHIVOS["CLAUDE.md"])
         self.assertFalse(os.path.exists(os.path.join(self.raiz, "bitacora.md")))
+        self.assertTrue(os.path.isdir(os.path.join(self.raiz, "05_exports/data")))
 
     def test_resumenes_por_lotes_sin_tocar_el_texto(self):
         salida = self.brain("sin-resumen", "--lotes", "1")
@@ -106,13 +113,13 @@ class BrainmeTest(unittest.TestCase):
         self.assertIn("Notas sin resumen: 4", salida)
         self.assertIn("Notas largas (más de 1.000 palabras): 1 -> [[idea-larga]]", salida)
         self.assertIn("Copias en conflicto de iCloud: 1", salida)
-        self.assertIn("Versiones viejas sueltas en 05_exports: 1", salida)
+        self.assertIn("Entregables por ordenar en 05_exports: 6 archivos", salida)
 
     def test_mapa_sin_graphify(self):
         with open(os.path.join(self.raiz, "01_knowledge/idea-larga.md"), "a", encoding="utf-8") as f:
             f.write("\nVer [[nota-que-no-existe]].\n")
         salida = self.brain("mapa")
-        self.assertIn("Mapa: 5 notas, 1 conexión · 1 isla, 1 enlace roto (revisa el jardín)", salida)
+        self.assertIn("Mapa: 6 notas, 1 conexión · 1 isla, 1 enlace roto (revisa el jardín)", salida)
         self.assertIn("[[nota-que-no-existe]] en [[idea-larga]]", salida)
         nota = self.brain("mapa", "--nota", "decision-precio")
         self.assertIn("[[decision-precio]] · Cobramos por fase. (02_decisions)", nota)
@@ -153,11 +160,19 @@ class BrainmeTest(unittest.TestCase):
                 f.write(texto)
         self.assertIn("Espacio armado a mano: ..", self.brain("estado"))
 
-    def test_versiones_y_mover(self):
+    def test_cada_entregable_en_su_carpeta(self):
         self.brain("versiones", "--plan", ".brainme/plan.json")
         self.brain("mover", "--plan", os.path.join(self.raiz, ".brainme/plan.json"))
-        self.assertTrue(os.path.exists(os.path.join(self.raiz, "05_exports/reports/_versiones/informe-v1.md")))
-        self.assertNotIn("informe-v1", self.brain("nombres"))
+        deck = "05_exports/presentations/deck/"
+        for rel in ("05_exports/reports/informe/informe-v2.md", "05_exports/reports/informe/versiones/informe-v1.md",
+                    deck + "deck-v2.html", deck + "deck.md", deck + "versiones/deck-v1.html",
+                    deck + "versiones/deck-v0.html"):
+            self.assertTrue(os.path.exists(os.path.join(self.raiz, rel)), rel)
+        self.assertFalse(os.path.exists(os.path.join(self.raiz, "05_exports/presentations/_versiones")))
+        nombres = self.brain("nombres")
+        self.assertIn("deck", nombres)
+        self.assertNotIn("informe-v1", nombres)
+        self.assertIn("ya están cada uno en su carpeta", self.brain("versiones"))
 
     def test_consumo_lee_registros_sin_repetir_mensajes(self):
         carpeta = os.path.join(self.tmp.name, "claude", "projects")
