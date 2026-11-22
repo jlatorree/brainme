@@ -5,8 +5,8 @@ skills; brainme decide dónde vive cada uno y lo conecta al mapa.
 
 **Terminado cuando:** cada nota que cita el entregable pasó la revisión de abajo; el
 entregable está en su carpeta, con la versión vigente a la vista y las anteriores en
-`versiones/`; tiene ficha si no es `.md`, la ficha enlaza lo que lo sustenta, y el
-proyecto está sincronizado.
+`versiones/`; tiene ficha si no es `.md`; el informe o la ficha enlaza lo que lo sustenta, y
+`brainme comprueba` no los nombra.
 
 Cada entregable tiene su carpeta, con su nombre sin versión:
 
@@ -20,13 +20,14 @@ Cada entregable tiene su carpeta, con su nombre sin versión:
 La carpeta del tipo (`reports/`, `presentations/`...) se crea con su primer entregable
 (`mkdir -p`).
 
-**"Haz un informe de...":** reúne el contexto con consultas. Si basta un informe en
-markdown, escríbelo en `05_exports/reports/<informe>/<informe>-v1.md` citando notas con
-wikilinks (y fuentes con doble cita). Si piden un formato rico (HTML, diagrama,
-presentación, excel), usa el skill que corresponda y guarda aquí el resultado.
+**"Haz un informe de...":** reúne lo que el proyecto sabe como en el flujo Responder. Si
+basta un informe en markdown, escríbelo en `05_exports/reports/<informe>/<informe>-v1.md` citando notas con wikilinks (y fuentes con
+doble cita). Si piden un formato rico (HTML, diagrama, presentación, excel), usa el skill que
+corresponda y guarda aquí el resultado.
 
-**Revisión antes de entregar:** `BRAIN mapa --nota <entregable o su ficha>` lista las
-notas que cita y marca los supuestos y las archivadas.
+**Revisión antes de entregar**, con el informe o la ficha ya escritos: cada nota que usó el
+entregable está enlazada ahí. `brainme comprueba` avisa si cita supuestos sin decirlo o notas
+archivadas, si está fuera de su carpeta o si le falta algo.
 - Un supuesto se confirma en su original, o el entregable lo presenta como supuesto.
 - Una nota archivada se cambia por la que la reemplaza; sin reemplazo, lo que decía ya
   no vale.
@@ -37,7 +38,7 @@ Al entregar, dile al usuario qué quedó como supuesto.
 
 | Entregable | Tipo | Qué haces |
 |---|---|---|
-| Informe `.md` / `.html` | `reports/` | Frontmatter y wikilinks a sus fuentes (en `.html`, ficha) |
+| Informe `.md` / `.html` | `reports/` | En `.md`: wikilinks a lo que lo sustenta y frontmatter con `titulo`, `tipo: entregable`, `version`, `fecha`, `estado`, `autor` (`brainme autor`), `resumen` y `tags`. En `.html`, ficha |
 | Diagrama `.png` `.jpg` `.svg` | `diagrams/` | Ficha |
 | Excel / Word `.xlsx` `.docx` | `data/` | Ficha |
 | Presentación `.key` `.pptx` | `presentations/` | Ficha + PDF exportado |
@@ -69,8 +70,8 @@ Al entregar, dile al usuario qué quedó como supuesto.
   archivo nuevo en la carpeta del entregable; en la ficha, actualiza `archivo` y
   `version` y agrega una fila al historial. La que se envía es la misma de
   `05_exports/`: no hay copias aparte; en la ficha, `estado: final`.
-- **Ordenar:** después de guardar una versión nueva, `BRAIN versiones --plan
-  .brainme/plan-versiones.json` y `BRAIN mover --plan .brainme/plan-versiones.json`.
+- **Ordenar:** después de guardar una versión nueva, `brainme versiones --plan
+  .brainme/plan-versiones.json` y `brainme mover --plan .brainme/plan-versiones.json`.
   Deja a la vista los archivos del número más alto y pasa los anteriores a
   `versiones/`. Agrupa por el nombre sin versión, así que también ordena entregables
   sueltos y los `_versiones/` de brainme 3.0. Lo que `versiones` lista aparte se
@@ -84,4 +85,4 @@ Al entregar, dile al usuario qué quedó como supuesto.
 - **Generadores:** los scripts o pipelines que producen un entregable van a `_taller/`
   en la raíz del proyecto, con un nombre que diga qué generan. Quedan fuera de las
   búsquedas y del mapa.
-- Al terminar: sincroniza.
+- Al terminar, comprueba.

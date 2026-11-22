@@ -28,8 +28,8 @@ relacionadas: ["[[pregunta-o-decision-que-ilumina]]", "[[informe-que-lo-cita]]"]
 <!--
 Instrucciones de la plantilla (bórralas al crear la nota):
 - Nombre del archivo: apellido-anio-palabra-clave.md (ej. vaswani-2017-transformer.md).
-- Se llena con lo que devolvió el deep research (o con lo que leíste del PDF). Un dato
-  que no está queda como "no reportado"; en "leido", si fue completo o solo el abstract.
+- Se llena con lo que leíste de la fuente. Un dato que no está queda como "no
+  reportado"; en "leido", si fue completo o solo el abstract.
 - Cada dato y cada cita textual salen de la fuente, y el DOI responde 302 en doi.org.
 - Quita todos los placeholders <...>.
 -->

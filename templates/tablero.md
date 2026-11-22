@@ -18,4 +18,3 @@ en notas enlazadas desde aquí.
 - <el siguiente paso concreto, y quién lo da>
 
 ## Reglas aprendidas
-- <regla o trampa comprobada en el trabajo, con cómo se sabe: [[nota]] o bitácora AAAA-MM-DD>

@@ -9,7 +9,8 @@ handoff está en `bitacora.md` y la sesión nueva quedó abierta (o el usuario t
 frase para abrirla).
 
 1. **Guarda lo pendiente.** Revisa la conversación: lo que se decidió, se aprendió o
-   quedó en duda y todavía no está en una nota va directo a su nota atómica (flujo 3).
+   quedó en duda y todavía no está en una nota va directo a su nota atómica (flujo Guardar
+   del SKILL).
    Lo que no está claro se guarda como pregunta abierta.
 2. **Pon al día el tablero:** plan y próximos pasos como quedan, y en "Reglas
    aprendidas" lo que la sesión comprobó, con cómo se sabe.
@@ -30,7 +31,7 @@ frase para abrirla).
 
    **Cuidado con:** lo que costó o se intentó sin éxito en esta sesión (solo si aplica).
    ```
-4. **Guárdalo en la bitácora:** `BRAIN bitacora --handoff .brainme/handoff.md`. Anota la
+4. **Guárdalo en la bitácora:** `brainme bitacora --handoff .brainme/handoff.md`. Anota la
    fecha y hora que imprime.
 5. **Abre la sesión nueva.** El primer mensaje de la sesión nueva es:
    `brainme: retoma el handoff del <fecha y hora>`.
@@ -43,7 +44,7 @@ frase para abrirla).
 
 ## Retomar ("retoma el handoff")
 
-1. `BRAIN bitacora --handoff-ultimo` muestra el último handoff; el tablero ya está
+1. `brainme bitacora --handoff-ultimo` muestra el último handoff; el tablero ya está
    cargado.
 2. Lee solo los archivos de **Leer primero**.
 3. Resume en hasta 6 líneas dónde quedamos y cuál es el siguiente paso, y sigue desde

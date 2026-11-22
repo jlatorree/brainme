@@ -28,7 +28,7 @@ Instrucciones de la plantilla (bórralas al crear la ficha):
 
 # <Nombre del entregable>
 
-**Archivo:** [<entregable-v1.ext>](<entregable-v1.ext>) · **PDF indexable:** [<entregable-v1.pdf>](<entregable-v1.pdf>)
+**Archivo:** [<entregable-v1.ext>](<entregable-v1.ext>) · **PDF:** [<entregable-v1.pdf>](<entregable-v1.pdf>)
 
 ## Qué es
 Una o dos frases: qué contiene, para quién y para qué decisión o momento del

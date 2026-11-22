@@ -16,6 +16,8 @@ relativas a la carpeta del proyecto.
    - Di la idea central. En una decisión, qué se decidió; en una pregunta, qué se
      pregunta; en una ficha de fuente, qué sostiene.
    - Si ayuda a encontrarla, agrega la pregunta que alguien haría para llegar a ella.
+   - Frases completas, sin rótulos y con sus tildes y signos: "Se usa la sala azul. ¿En qué
+     sala va el taller?".
    - Todo sale de la nota.
    - Texto plano en una línea, con comillas simples si hacen falta.
 3. Guarda todos los resúmenes del lote en un solo archivo JSON junto al lote, con el

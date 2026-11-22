@@ -2,10 +2,16 @@
 """Herramienta de brainme: estado del proyecto y orden sin romper enlaces.
 
 Subcomandos (se corren desde la raíz del proyecto):
-  sincroniza   línea del mapa tras escribir: notas, islas y enlaces rotos
+  llevar       lleva algo al contexto general, después de revisar que no identifique al proyecto
+  guia         una guía del skill con las plantillas que usa su flujo (inbox, guardar, jardin...)
+  inbox        lo que hay en 00_inbox/, con el origen que llevarán sus notas
+  leer         varias notas completas, con sus originales
+  comprueba    después de escribir: qué quedó suelto, incompleto o con enlaces rotos
   estado       resumen compacto para ponerse al día (inbox, preguntas, decisiones, mapa)
   mapa         mapa de enlaces entre notas: lo más conectado, islas, enlaces rotos,
                los vecinos de una nota (--nota) o el camino entre dos (--camino)
+  buscar       notas que hablan de algo, sin importar tildes ni plurales, y los originales
+  procesado    saca del inbox un archivo ya procesado, sin escribir encima de otro
   nombres      índice de nombres de notas por carpeta (para detectar duplicados)
   inventario   lista lo que hay y qué falta ordenar -> .brainme/inventario.json
   respaldo     zip de todo el proyecto -> .brainme/respaldos/
@@ -20,8 +26,8 @@ Subcomandos (se corren desde la raíz del proyecto):
   consumo      tokens de contexto por respuesta, leídos de los registros de Claude Code
   migrar       revisa y aplica lo que le falta a un proyecto de una versión anterior
   versiones    plan para dar a cada entregable su carpeta, con las versiones anteriores en versiones/
-  espacio      panorama de un espacio: contexto general y proyectos, sin abrir notas
-  crear        carpetas, tablero y CLAUDE.md de un proyecto (suelto, contexto general o de un espacio)
+  multiproyecto  panorama de una carpeta multiproyecto: contexto general y proyectos, sin abrir notas
+  crear        carpetas, tablero y CLAUDE.md de un proyecto (suelto, contexto general o de un multiproyecto)
   jardin       lista de trabajo del jardín (sueño): tablero, supuestos, lo editado, duplicados, mapa
   archivar     pasa una nota obsoleta o fusionada a archive/, sin romper enlaces (o los reapunta)
   texto        texto de un Word, Excel o PowerPoint (.docx, .xlsx, .pptx), para leerlo
@@ -31,6 +37,8 @@ Solo usa la biblioteca estándar de Python (3.9 o superior).
 
 import argparse
 import datetime
+import difflib
+import hashlib
 import json
 import os
 import re
@@ -41,7 +49,7 @@ import zipfile
 import xml.etree.ElementTree as ET
 from urllib.parse import unquote
 
-VERSION = "3.2.0"
+VERSION = "3.3.0"
 # Última versión que cambió algo dentro de los proyectos: los anteriores piden migrar
 VERSION_PROYECTO = "3.2.0"
 
@@ -546,9 +554,27 @@ def cmd_inventario(args):
     if getattr(args, "tabla", False) and por_ordenar:
         print("\nPOR ORDENAR (ruta | tipo | título | palabras | usado por | vista previa):")
         for a in por_ordenar:
-            print("%s | %s | %s | %s | %s | %s" % (
+            print("%s | %s | %s | %s | %s | %s%s" % (
                 a["ruta"], a["categoria"], a.get("titulo") or "-", a.get("palabras", "-"),
-                len(a["usado_por"]), (a.get("vista_previa") or "")[:140]))
+                len(a["usado_por"]), (a.get("vista_previa") or "")[:140],
+                sugerir_destino(a["ruta"], [x["ruta"] for x in por_ordenar])))
+
+
+TIPO_POR_CATEGORIA = {"imagen": "diagrams", "office": "data", "presentacion": "presentations"}
+
+
+def sugerir_destino(ruta, todas):
+    """Un archivo con número de versión es un entregable: la más alta va en la carpeta de su nombre
+    sin versión, y las anteriores en su versiones/."""
+    m = RE_VERSION_ARCHIVO.match(ruta.rsplit("/", 1)[-1])
+    if not m:
+        return ""
+    hermanas = [RE_VERSION_ARCHIVO.match(r.rsplit("/", 1)[-1]) for r in todas]
+    ultima = max(int(h.group("n")) for h in hermanas if h and clave(h.group("base")) == clave(m.group("base")))
+    vieja = int(m.group("n")) < ultima
+    return " -> entregable con versiones%s: 05_exports/%s/%s/%s" % (
+        ", anterior" if vieja else "", TIPO_POR_CATEGORIA.get(categoria(ruta), "reports"),
+        slug_tag(m.group("base")) or m.group("base"), VERSIONES + "/" if vieja else "")
 
 
 # ---------------------------------------------------------------- respaldo
@@ -842,6 +868,11 @@ def cmd_mover(args):
     comun = dict(plan.get("frontmatter_comun") or {})
     reg = ejecutar_movimientos(raiz, plan.get("movimientos", []), comun, "orden")
     informar_movimiento(reg)
+    movidos = {m["a"] for m in reg["movimientos"]}
+    faltan = [m for m in plan_entregables(listar_archivos(raiz))[0] if m["de"] in movidos]
+    if faltan:
+        print("Entregables recién movidos con versiones por ordenar: %d -> brainme versiones --plan .brainme/plan-versiones.json"
+              % len(faltan))
 
 
 def cmd_deshacer(args):
@@ -878,9 +909,206 @@ def leer_fm(texto):
     return campos
 
 
-def cmd_sincroniza(args):
+TIPOS = {"01_knowledge": ("conocimiento", "tema"), "02_decisions": ("decision",), "03_open_questions": ("pregunta",),
+         "04_sources": ("literatura", "fuente-web"), "05_exports": ("entregable",)}
+RE_SIN_LLENAR = re.compile(r"(?<!\]\()<(?!https?:|!--|/)[^<>\n]*(?:[ |]|AAAA)[^<>\n]*>")
+
+
+def sin_codigo(texto):
+    """El texto sin bloques ni tramos de código."""
+    texto = re.sub(r"^(```|~~~).*?^\1[ \t]*$", "", texto, flags=re.M | re.S)
+    return re.sub(r"`[^`\n]*`", "", texto)
+
+
+def por_corregir(raiz, r, texto, datos):
+    """Lo que le falta a una nota según las convenciones; para un entregable, también lo que cita."""
+    fm, carpeta, faltas = leer_fm(texto), r.split("/")[0], []
+    tipo = plano(fm.get("tipo") or "")
+    if not texto.startswith("---\n"):
+        return ["sin frontmatter"]
+    if tipo not in TIPOS.get(carpeta, (tipo,)):
+        faltas.append("tipo «%s»: aquí va %s" % (fm.get("tipo") or "", " o ".join(TIPOS[carpeta])))
+    campos = ["resumen"] + (["autor"] if carpeta[:2] in ("01", "02", "03") or (carpeta[:2] == "05" and not fm.get("archivo")) else [])
+    if tipo in ("conocimiento", "decision", "pregunta"):
+        campos.append("origen")
+    campos += {"conocimiento": ["certeza", "como_se_sabe"], "decision": ["estado"], "pregunta": ["estado", "prioridad"]}.get(tipo, [])
+    if tipo == "decision" and (fm.get("estado") or "").lower() == "tomada":
+        campos.append("decidido_por")
+    vacios = [c for c in campos if not (fm.get(c) or "").strip()]
+    if vacios:
+        faltas.append("falta " + ", ".join(vacios))
+    if tipo == "conocimiento" and fm.get("certeza") and plano(fm["certeza"]) not in ("confirmado", "supuesto"):
+        faltas.append("certeza «%s»: va confirmado o supuesto" % fm["certeza"])
+    limpio = sin_codigo(texto)
+    if "Instrucciones de la plantilla" in texto or RE_SIN_LLENAR.search(re.sub(r"<!--.*?-->", "", limpio, flags=re.S)):
+        faltas.append("quedan partes de la plantilla sin llenar")
+    if any(clave(partir_wiki(m.group(2))[0].rsplit("/", 1)[-1]) == clave(nombre_nota(r)) for m in RE_WIKI.finditer(limpio)):
+        faltas.append("se enlaza a sí misma")
+    cuerpo = re.sub(r"^## Texto exacto.*?(?=^## |\Z)", "", limpio, flags=re.M | re.S)
+    if any("—" in l for l in cuerpo.split("\n") if not l.lstrip().startswith((">", "|"))):
+        faltas.append("usa raya (—)")
+    if carpeta == "05_exports":
+        partes = r.split("/")
+        if len(partes) != 4 or re.sub(r"-v\d+.*$", "", nombre_nota(r)) != partes[2]:
+            faltas.append("va en su propia carpeta: 05_exports/<tipo>/<entregable>/")
+        citadas = {x: leer_fm(leer_texto(os.path.join(raiz, x))[0] or "") for x in sorted(datos[1].get(r, ()))}
+        viejas = [x for x, f in citadas.items() if f.get("archivada")]
+        dudas = [x for x, f in citadas.items() if es_supuesto(f)]
+        if viejas:
+            faltas.append("cita notas archivadas: " + lista_notas(viejas, 6))
+        if dudas and not re.search(r"supuest|sin (datos|confirmar|comprobar)|por confirmar|hipotesis", plano(texto)):
+            faltas.append("cita supuestos y no lo dice: " + lista_notas(dudas, 6))
+    return faltas
+
+
+HISTORIA = os.path.join(".brainme", "historia.json")
+
+
+def historia_de(texto):
+    """Lo que una nota no pierde al ampliarla: su origen y las líneas de ## Actualizaciones."""
+    s = re.search(r"^## Actualizaciones[ \t]*\n(.*?)(?=^## |\Z)", texto, re.M | re.S)
+    lineas = [re.sub(r"\s+", " ", l).strip() for l in re.findall(
+        r"^\s*[-*]\s*(\d{4}-\d{2}-\d{2}.*)$", s.group(1) if s else "", re.M)]
+    return {"origen": leer_fm(texto).get("origen") or "", "lineas": lineas}
+
+
+def leer_historia(raiz):
+    try:
+        with open(os.path.join(raiz, HISTORIA), encoding="utf-8") as f:
+            h = json.load(f)
+        return h if isinstance(h, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def guardar_historia(raiz, h):
+    os.makedirs(os.path.join(raiz, ".brainme"), exist_ok=True)
+    with open(os.path.join(raiz, HISTORIA), "w", encoding="utf-8") as f:
+        json.dump(h, f, ensure_ascii=False, indent=1, sort_keys=True)
+
+
+def usa_brainme(raiz):
+    return es_proyecto(leer_texto(os.path.join(raiz, "CLAUDE.md"))[0])
+
+
+def anotar_historia(raiz, rels):
+    """Antes de escribir: cómo está cada nota. No pisa lo ya anotado, que es contra lo que se compara."""
+    if not usa_brainme(raiz):
+        return
+    if not registro_jardin(raiz).get("tablero"):
+        anotar_tablero(raiz)
+    h = leer_historia(raiz)
+    h = {} if h is None else h
+    antes, hoy = json.dumps(h, sort_keys=True), datetime.date.today().isoformat()
+    # La primera vez en el día se anota cómo amaneció cada nota; las que aparecen después son de hoy
+    hay_base = any(v.get("dia") == hoy for v in h.values())
+    for r in notas_resumibles(rels):
+        k, texto = clave(nombre_nota(r)), leer_texto(os.path.join(raiz, r))[0] or ""
+        if k not in h:
+            h[k] = dict(historia_de(texto), huella="" if hay_base else huella(texto), dia=hoy)
+        elif h[k].get("dia") != hoy:
+            h[k].update(huella=huella(texto), dia=hoy)
+    if json.dumps(h, sort_keys=True) != antes or not os.path.exists(os.path.join(raiz, HISTORIA)):
+        guardar_historia(raiz, h)
+
+
+def perdidas(raiz, notas):
+    """Notas que perdieron su origen o una actualización desde la última vez que se comprobó. Lo
+    que no perdió nada queda anotado como está."""
+    h, faltas = leer_historia(raiz), []
+    if h is None:
+        return []
+    for r in notas:
+        k, hoy = clave(nombre_nota(r)), historia_de(leer_texto(os.path.join(raiz, r))[0] or "")
+        antes = h.get(k)
+        if antes is not None:
+            f = []
+            if antes["origen"] and antes["origen"] != hoy["origen"]:
+                f.append("cambió su origen; devuélvelo (era «%s»)" % antes["origen"])
+            f += ["falta o cambió una actualización; devuélvela («%s»)" % l for l in antes["lineas"] if l not in hoy["lineas"]]
+            if f:
+                faltas.append((r, f))
+                continue
+        h[k] = dict({"huella": "", "dia": datetime.date.today().isoformat()}, **dict(antes or {}, **hoy))
+    guardar_historia(raiz, h)
+    return faltas
+
+
+def parecida(texto, rels):
+    """Sugerencia para un enlace roto: la nota de nombre más parecido."""
+    buscado = plano(claves_de_notas([texto])[0]).replace("-", " ")
+    nombres = {plano(nombre_nota(r)).replace("-", " "): nombre_nota(r) for r in rels if r.endswith(".md")}
+    cerca = difflib.get_close_matches(buscado, list(nombres), n=1, cutoff=0.8)
+    return " (¿[[%s]]?)" % nombres[cerca[0]] if cerca else ""
+
+
+def revision(raiz):
+    """(datos del mapa, si hay algo escrito hoy, lo que falta corregir) de lo escrito en el último día."""
+    rels = listar_archivos(raiz)
+    datos, problemas = mapa_de_enlaces(raiz, rels), []
+    conocidas = leer_historia(raiz)
+    sin_historia = perdidas(raiz, datos[0])
+    hoy = datetime.date.today().isoformat()
+    # Lo escrito hoy: lo que no existía o dice otra cosa que al empezar el día. Sin ese registro,
+    # la fecha del archivo
+    if conocidas is None:
+        desde = datetime.datetime.now().timestamp() - 86400
+        nuevas = {r for r in datos[0] if os.path.getmtime(os.path.join(raiz, r)) > desde}
+    else:
+        nuevas = {r for r in datos[0] if (conocidas.get(clave(nombre_nota(r))) or {}).get("huella")
+                  != huella(leer_texto(os.path.join(raiz, r))[0] or "")}
+    islas, sin_salida = sueltas(datos)
+    flojas = [r for r in islas + sin_salida if r in nuevas]
+    if flojas:
+        problemas.append("Escritas hoy, sin enlaces a otra nota (%d): %s" % (len(flojas), lista_notas(flojas, len(flojas))))
+    solos = sorted(r for r in nuevas if r.startswith("05_exports/") and not datos[1][r])
+    if solos:
+        problemas.append("Entregables de hoy que no enlazan lo que los sustenta (%d): %s" % (
+            len(solos), lista_notas(solos, len(solos))))
+    for origen, texto in datos[3]:
+        if origen in nuevas:
+            problemas.append("Escrita hoy, con enlace roto: %s en [[%s]]%s" % (texto, nombre_nota(origen), parecida(texto, rels)))
+    # El tablero se carga en cada sesión: sus enlaces también llegan a una nota
+    tablero = leer_texto(os.path.join(raiz, TABLERO))[0] or ""
+    layout = Layout(raiz, buscar_vault(raiz), rels)
+    for m in RE_WIKI.finditer(sin_codigo(tablero)):
+        if partir_wiki(m.group(2))[0] and not layout.resolver_wiki(partir_wiki(m.group(2))[0], TABLERO):
+            problemas.append("Enlace roto en el tablero: %s%s" % (m.group(0), parecida(m.group(0), rels)))
+    # Los campos se piden a las notas nuevas y a las que dicen que son de hoy
+    faltas = ["  [[%s]]: %s" % (nombre_nota(r), "; ".join(f)) for r, f in sin_historia]
+    for r in sorted(nuevas):
+        texto = leer_texto(os.path.join(raiz, r))[0] or ""
+        es_nueva = conocidas is not None and not (conocidas.get(clave(nombre_nota(r))) or {}).get("huella")
+        declara = RE_FECHA.search(leer_fm(texto).get("fecha") or "") or historia_de(texto)["lineas"]
+        if "/archive/" not in r and (es_nueva or (declara and fecha_de_cambio(raiz, r, texto) == hoy)):
+            f = por_corregir(raiz, r, texto, datos)
+            if f:
+                faltas.append("  [[%s]]: %s" % (nombre_nota(r), "; ".join(f)))
+    if faltas:
+        problemas.append("Por corregir en lo escrito hoy (%d):\n%s%s" % (
+            len(faltas), "\n".join(faltas[:15]), "\n  ... y %d más" % (len(faltas) - 15) if len(faltas) > 15 else ""))
+    return datos, bool(nuevas), problemas
+
+
+def cmd_comprueba(args):
+    """Línea del mapa y, de lo escrito en el último día, lo que quedó sin enlaces, con enlaces
+    rotos, incompleto o sin parte de su historia."""
     raiz = os.path.abspath(args.raiz)
-    print(linea_mapa(mapa_de_enlaces(raiz, listar_archivos(raiz))))
+    if args.dejar:
+        h = leer_historia(raiz) or {}
+        notas = {clave(nombre_nota(r)): r for r in notas_resumibles(listar_archivos(raiz))}
+        for n in claves_de_notas(args.dejar):
+            if n not in notas:
+                print("No encuentro [[%s]]." % n)
+                sys.exit(2)
+            h[n] = dict(h.get(n) or {}, **historia_de(leer_texto(os.path.join(raiz, notas[n]))[0] or ""))
+        guardar_historia(raiz, h)
+    datos, hay, problemas = revision(raiz)
+    print(linea_mapa(datos))
+    if problemas:
+        print("\n".join(problemas))
+    elif hay:
+        print("Lo escrito hoy está completo.")
 
 
 NOMBRES_CAT = {"pdf": "PDFs", "imagen": "imágenes", "office": "archivos de Office",
@@ -890,18 +1118,18 @@ NOMBRES_CAT = {"pdf": "PDFs", "imagen": "imágenes", "office": "archivos de Offi
 def cmd_estado(args):
     raiz = os.path.abspath(args.raiz)
     texto_claude, _ = leer_texto(os.path.join(raiz, "CLAUDE.md"))
-    if es_espacio(texto_claude):
-        print("Esta carpeta es la raíz de un espacio: su panorama sale con BRAIN espacio.")
+    if es_multi(texto_claude):
+        print("Esta es la raíz de una carpeta multiproyecto: su panorama sale con brainme multiproyecto.")
         return
     configurado = es_proyecto(texto_claude)
-    if not configurado and espacio_a_mano(raiz) == raiz:
-        print("Esta carpeta agrupa proyectos brainme: es un espacio armado a mano. Ofrece convertirlo "
-              "(references/espacio.md) en vez de configurarla como proyecto.")
+    if not configurado and multi_a_mano(raiz) == raiz:
+        print("Esta carpeta agrupa proyectos brainme: es multiproyecto, armada a mano. Ofrece "
+              "convertirla (references/multiproyecto.md) en vez de configurarla como proyecto.")
         return
     print("Proyecto: %s | %s" % (os.path.basename(raiz),
                                  "configurado con brainme" if configurado else "SIN CONFIGURAR"))
     rels = listar_archivos(raiz)
-    estado_espacio(raiz, rels, texto_claude, configurado)
+    estado_multi(raiz, rels, texto_claude, configurado)
     estado_tablero(raiz)
 
     inbox =[r for r in rels if r.startswith("00_inbox/") and not r.startswith("00_inbox/archive/")]
@@ -1183,10 +1411,10 @@ def cmd_mapa(args):
     detalle_mapa(datos)
 
 
-def detalle_mapa(datos):
+def detalle_mapa(datos, dejadas=()):
     """Islas, notas sin enlaces de salida y enlaces rotos, con nombres."""
-    rotos = datos[3]
-    islas, sin_salida = sueltas(datos)
+    rotos = [(o, t) for o, t in datos[3] if claves_de_notas([t])[0] not in dejadas]
+    islas, sin_salida = ([r for r in lista if clave(nombre_nota(r)) not in dejadas] for lista in sueltas(datos))
     if islas:
         print("Islas, sin ningún enlace (%d): %s" % (len(islas), lista_notas(islas, 30)))
     if sin_salida:
@@ -1280,6 +1508,27 @@ def cmd_sin_resumen(args):
         print("  " + r)
 
 
+INTERROGATIVAS = {"que": "qué", "cual": "cuál", "cuales": "cuáles", "cuanto": "cuánto", "cuanta": "cuánta", "cuantos": "cuántos",
+                  "cuantas": "cuántas", "quien": "quién", "quienes": "quiénes", "como": "cómo", "donde": "dónde", "cuando": "cuándo"}
+
+
+def limpiar_resumen(resumen):
+    """Sin rótulos («Pregunta para encontrarla:», «Decisión:»), con ¿? y con las tildes que no dependen
+    del sentido: -ción, -sión y la palabra que abre una pregunta."""
+    resumen = re.sub(r"\s+", " ", str(resumen)).strip()
+    resumen = re.sub(r"(^|[.!?]\s+)(?:pregunta(?: para encontrarla)?|decisi[oó]n|conocimiento|resumen)\s*:\s*", r"\1",
+                     resumen, flags=re.I)
+    resumen = re.sub(r"(?<=[csx])ion\b", "ión", resumen)
+
+    def pregunta(m):
+        palabra = m.group(2)
+        bien = INTERROGATIVAS.get(plano(palabra))
+        return m.group(1) + "¿" + (bien.capitalize() if bien else palabra) + m.group(3) if bien else m.group(0)
+
+    resumen = re.sub(r"(^|[.!?]\s+)¿?([^\W\d_]+)([^.!?¿]*\?)", pregunta, resumen)
+    return re.sub(r"(^|[.!?]\s+)([^\W\d_])", lambda m: m.group(1) + m.group(2).upper(), resumen)
+
+
 def cmd_poner_resumenes(args):
     """Agrega `resumen:` al frontmatter. No toca el texto de la nota ni un resumen que ya exista."""
     raiz = os.path.abspath(args.raiz)
@@ -1301,6 +1550,7 @@ def cmd_poner_resumenes(args):
         if tiene_resumen(leer_fm(texto)):
             ya += 1
             continue
+        resumen = limpiar_resumen(resumen)
         largos += len(resumen) > 300
         escribir_texto(ruta, fusionar_frontmatter(texto, {"resumen": resumen}, []), crlf)
         escritos += 1
@@ -1337,7 +1587,7 @@ def cmd_autor(args):
     elif cfg.get("autor"):
         print("Autor: %s" % cfg["autor"])
     else:
-        print('Autor: no definido. Pregúntale su nombre al usuario y corre: BRAIN autor "Nombre"')
+        print('Autor: no definido. Pregúntale su nombre al usuario y corre: brainme autor "Nombre"')
 
 
 BITACORA = "bitacora.md"
@@ -1390,10 +1640,10 @@ def cmd_bitacora(args):
         return
     autor = leer_config().get("autor")
     if not autor:
-        print('Falta el autor: pregúntale su nombre al usuario y corre BRAIN autor "Nombre".')
+        print('Falta el autor: pregúntale su nombre al usuario y corre brainme autor "Nombre".')
         sys.exit(2)
     if not args.texto and not args.handoff:
-        print('Uso: BRAIN bitacora "qué se hizo" [--sigue "qué sigue"] | --handoff archivo | --ultimas N')
+        print('Uso: brainme bitacora "qué se hizo" [--sigue "qué sigue"] | --handoff archivo | --ultimas N')
         sys.exit(1)
     momento = datetime.datetime.now()
     hoy, hora = momento.strftime("%Y-%m-%d"), momento.strftime("%H:%M")
@@ -1416,6 +1666,11 @@ def cmd_bitacora(args):
         nuevo += "- %s · %s · %s\n" % (hora, autor, linea)
         print("Bitácora: %s %s · %s" % (hoy, hora, linea))
     escribir_texto(ruta, nuevo, False)
+    cuidar_tablero(raiz, hoy)
+    # Es lo último que se corre en cada flujo: aquí sale lo que quedó por corregir
+    problemas = revision(raiz)[2] if usa_brainme(raiz) else []
+    if problemas:
+        print("Antes de terminar, corrige:\n" + "\n".join(problemas))
 
 
 # --------------------------------------------------------------- consumo
@@ -1533,12 +1788,12 @@ def cmd_consumo(args):
         print("  %s · %d · %s · %s" % (fecha, len(cs), miles(sum(cs) / len(cs)), miles(max(cs))))
 
 
-# --------------------------------------------------------------- espacio
+# --------------------------------------------------------------- multiproyecto
 
 PROYECTOS = "proyectos"
 RE_ANIO = re.compile(r"^\d{4}$")
 RE_SECCION_PROYECTO = re.compile(r"^## brainme[ \t]*$", re.M)
-RE_SECCION_ESPACIO = re.compile(r"^## brainme · espacio[ \t]*$", re.M)
+RE_SECCION_MULTI = re.compile(r"^## brainme · (?:multiproyecto|espacio)[ \t]*$", re.M)  # espacio: hasta la 3.2
 PLANTILLAS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates")
 
 
@@ -1546,8 +1801,8 @@ def es_proyecto(texto):
     return bool(texto and RE_SECCION_PROYECTO.search(texto))
 
 
-def es_espacio(texto):
-    return bool(texto and RE_SECCION_ESPACIO.search(texto))
+def es_multi(texto):
+    return bool(texto and RE_SECCION_MULTI.search(texto))
 
 
 def campo(texto, nombre):
@@ -1562,16 +1817,20 @@ def prefijo_de(texto):
     return m.group(1) if m else ""
 
 
-def general_de(texto_espacio):
-    return campo(texto_espacio, "Contexto general").strip("`/ ")
+def nombre_multi(texto, base):
+    return campo(texto, "Multiproyecto") or campo(texto, "Espacio") or os.path.basename(base)
 
 
-def buscar_espacio(carpeta):
-    """(raíz, texto del CLAUDE.md) del espacio que contiene a carpeta, o (None, None)."""
+def general_de(texto_multi):
+    return campo(texto_multi, "Contexto general").strip("`/ ")
+
+
+def buscar_multi(carpeta):
+    """(raíz, texto del CLAUDE.md) de la carpeta multiproyecto que contiene a carpeta, o (None, None)."""
     d = carpeta
     while True:
         texto = leer_texto(os.path.join(d, "CLAUDE.md"))[0]
-        if es_espacio(texto):
+        if es_multi(texto):
             return d, texto
         padre = os.path.dirname(d)
         if padre == d:
@@ -1597,9 +1856,9 @@ def proyectos_bajo(carpeta, niveles=2):
     return hallados
 
 
-def espacio_a_mano(carpeta):
+def multi_a_mano(carpeta):
     """La carpeta, o una hasta 3 niveles arriba, con un CLAUDE.md propio y al menos dos
-    proyectos brainme adentro, pero sin la sección de espacio: un espacio armado a mano."""
+    proyectos brainme adentro, pero sin la sección de multiproyecto: una carpeta armada a mano."""
     casa, d = os.path.expanduser("~"), carpeta
     for _ in range(4):
         if d in (casa, os.path.dirname(d)):
@@ -1611,9 +1870,9 @@ def espacio_a_mano(carpeta):
     return None
 
 
-def ficha_del_espacio(texto_espacio):
+def ficha_comun(texto_multi):
     """Campos de '### Ficha de cada proyecto', siempre con estado y prefijo."""
-    m = re.search(r"^### Ficha de cada proyecto[ \t]*\n(.*?)(?=^#|\Z)", texto_espacio, re.M | re.S)
+    m = re.search(r"^### Ficha de cada proyecto[ \t]*\n(.*?)(?=^#|\Z)", texto_multi, re.M | re.S)
     campos = re.findall(r"^- \*\*(.+?):\*\*", m.group(1), re.M) if m else []
     for fijo in ("Prefijo de notas", "Estado"):
         if fijo not in campos:
@@ -1660,8 +1919,49 @@ def seccion_tablero(texto, titulo):
     return vinetas
 
 
+def cuerpo_tablero(texto):
+    cuerpo = re.sub(r"\A---\n.*?\n---[ \t]*(?:\n|\Z)", "", texto, flags=re.S)
+    return hashlib.sha1(re.sub(r"\s+", " ", cuerpo).strip().encode("utf-8")).hexdigest()[:16]
+
+
+def anotar_tablero(raiz):
+    """Cómo está el tablero, para saber después si de verdad cambió."""
+    if not usa_brainme(raiz):
+        return
+    texto = leer_texto(os.path.join(raiz, TABLERO))[0]
+    reg = registro_jardin(raiz)
+    if texto and reg.get("tablero") != cuerpo_tablero(texto):
+        reg["tablero"] = cuerpo_tablero(texto)
+        guardar_jardin(raiz, reg)
+
+
+def cuidar_tablero(raiz, hoy):
+    """Devuelve al tablero su frontmatter si lo perdió, anota cuándo cambió y, si no cambió,
+    recuerda sus próximos pasos."""
+    ruta = os.path.join(raiz, TABLERO)
+    tablero, crlf = leer_texto(ruta)
+    if not tablero or not usa_brainme(raiz):
+        return
+    antes = registro_jardin(raiz).get("tablero")
+    cambio = bool(antes) and antes != cuerpo_tablero(tablero)
+    fecha = leer_fm(tablero).get("actualizado") or ""
+    if not tablero.startswith("---\n"):
+        escribir_texto(ruta, "---\ntipo: tablero\nactualizado: %s\n---\n\n%s" % (hoy, tablero.lstrip("\n")), crlf)
+        print("Tablero: le devolví su encabezado.")
+    elif cambio and fecha != hoy:
+        nuevo = re.sub(r"^actualizado:.*$", "actualizado: " + hoy, tablero, count=1, flags=re.M)
+        escribir_texto(ruta, nuevo if "actualizado:" in tablero.split("\n---", 1)[0] else
+                       tablero.replace("---\n", "---\nactualizado: %s\n" % hoy, 1), crlf)
+        print("Tablero: anoté que se actualizó hoy.")
+    elif not cambio and fecha != hoy:
+        pasos = [p.rstrip(".") for p in seccion_tablero(tablero, "Próximos pasos")]
+        print("Tablero sin cambios hoy. %sSi lo hecho resuelve un paso, cambia el plan o comprueba una regla, ponlo al día (un paso resuelto sale de la lista)."
+              % ("Próximos pasos: " + " / ".join(pasos[:4]) + ". " if pasos else ""))
+    anotar_tablero(raiz)
+
+
 def estado_tablero(raiz):
-    """Línea del tablero en BRAIN estado: tamaño, fecha y qué le falta."""
+    """Línea del tablero en brainme estado: tamaño, fecha y qué le falta."""
     texto = leer_texto(os.path.join(raiz, TABLERO))[0]
     if texto is None:
         return
@@ -1676,31 +1976,31 @@ def estado_tablero(raiz):
 
 
 def cmd_crear(args):
-    """Estructura y CLAUDE.md de un proyecto: suelto, contexto general o proyecto de un espacio.
-    Dentro de un espacio, la carpeta se indica desde la raíz del espacio."""
+    """Estructura y CLAUDE.md de un proyecto: suelto, contexto general o proyecto de una carpeta
+    multiproyecto. Dentro de una, la carpeta se indica desde su raíz."""
     raiz = os.path.abspath(args.raiz)
-    base, texto_espacio = buscar_espacio(raiz)
+    base, texto_multi = buscar_multi(raiz)
     destino = os.path.normpath(os.path.join(base or raiz, args.carpeta)) if args.carpeta else raiz
     nombre = os.path.basename(destino)
     if not base:
-        base, texto_espacio = buscar_espacio(destino)
+        base, texto_multi = buscar_multi(destino)
     ficha, prefijo = [], ""
     if base:
-        general = general_de(texto_espacio)
+        general = general_de(texto_multi)
         anio = os.path.dirname(destino)
         if os.path.dirname(anio) == os.path.join(base, PROYECTOS) and RE_ANIO.match(os.path.basename(anio)):
             prefijo = (args.prefijo or "").strip().strip("`")
             if not prefijo:
-                print("Un proyecto de un espacio necesita --prefijo para sus notas (por ejemplo, acme-).")
+                print("Un proyecto de una carpeta multiproyecto necesita --prefijo para sus notas (por ejemplo, acme-).")
                 sys.exit(1)
             prefijo += "" if prefijo.endswith("-") else "-"
             for otro in proyectos_bajo(os.path.join(base, PROYECTOS)):
                 if otro != destino and prefijo_de(leer_texto(os.path.join(otro, "CLAUDE.md"))[0]) == prefijo:
                     print("El prefijo %s ya lo usa %s: elige otro." % (prefijo, os.path.relpath(otro, base)))
                     sys.exit(1)
-            ficha = ficha_del_espacio(texto_espacio)
+            ficha = ficha_comun(texto_multi)
         elif destino != os.path.join(base, general):
-            print("En el espacio %s, cada proyecto va en %s/<año>/ (por ejemplo, %s/%d/acme-precios) "
+            print("En la carpeta multiproyecto %s, cada proyecto va en %s/<año>/ (por ejemplo, %s/%d/acme-precios) "
                   "y el contexto general es %s/." % (os.path.basename(base), PROYECTOS, PROYECTOS,
                                                      datetime.date.today().year, general))
             sys.exit(1)
@@ -1761,25 +2061,25 @@ def linea_ultima(ultima, ruta=None):
     return "última sesión: %s · %s" % (ultima["fecha"], ultima["linea"][:160]) + sigue
 
 
-def cmd_espacio(args):
+def cmd_multiproyecto(args):
     raiz = os.path.abspath(args.raiz)
-    base, texto = buscar_espacio(raiz)
+    base, texto = buscar_multi(raiz)
     if not base:
-        a_mano = espacio_a_mano(raiz)
+        a_mano = multi_a_mano(raiz)
         if not a_mano:
-            print("Esta carpeta no está dentro de un espacio brainme.")
+            print("Esta carpeta no está dentro de una carpeta multiproyecto de brainme.")
             return
-        print("Espacio armado a mano, sin la sección de brainme: %s" % a_mano)
+        print("Carpeta multiproyecto armada a mano, sin la sección de brainme: %s" % a_mano)
         print("Proyectos brainme adentro: " + ", ".join(os.path.relpath(p, a_mano) for p in proyectos_bajo(a_mano, 3)))
-        print("Para convertirlo: references/espacio.md, parte «Convertir un espacio armado a mano».")
+        print("Para convertirla: references/multiproyecto.md, parte «Convertir una carpeta armada a mano».")
         return
     general = general_de(texto)
-    print("Espacio: %s · contexto general: %s/" % (campo(texto, "Espacio") or os.path.basename(base), general))
+    print("Multiproyecto: %s · contexto general: %s/" % (nombre_multi(texto, base), general))
     if es_proyecto(leer_texto(os.path.join(base, general, "CLAUDE.md"))[0]):
         _, cifras, ultima = resumen_de_proyecto(os.path.join(base, general))
         print("Contexto general: %s\n  %s" % (cifras, linea_ultima(ultima, os.path.join(base, general))))
     else:
-        print("Contexto general: sin crear (BRAIN crear %s)" % general)
+        print("Contexto general: sin crear (brainme crear %s)" % general)
     carpeta = os.path.join(base, PROYECTOS)
     filas, cerrados, fuera = [], [], []
     for anio in sorted(os.listdir(carpeta)) if os.path.isdir(carpeta) else []:
@@ -1815,18 +2115,18 @@ def cmd_espacio(args):
         print("En %s/, fuera de <año>/<proyecto> o sin brainme: %s" % (PROYECTOS, ", ".join(fuera)))
 
 
-def estado_espacio(raiz, rels, texto_claude, configurado):
-    """Línea del espacio en BRAIN estado: a qué espacio pertenece y notas sin prefijo."""
-    base, texto = buscar_espacio(raiz)
+def estado_multi(raiz, rels, texto_claude, configurado):
+    """Línea de brainme estado: a qué carpeta multiproyecto pertenece, y notas sin prefijo."""
+    base, texto = buscar_multi(raiz)
     if not base:
-        a_mano = espacio_a_mano(raiz) if configurado else None
+        a_mano = multi_a_mano(raiz) if configurado else None
         if a_mano:
-            print("Espacio armado a mano: %s, con este y otros proyectos brainme adentro. Ofrece "
-                  "convertirlo (references/espacio.md)." % os.path.relpath(a_mano, raiz))
+            print("Carpeta multiproyecto armada a mano: %s, con este y otros proyectos brainme adentro. "
+                  "Ofrece convertirla (references/multiproyecto.md)." % os.path.relpath(a_mano, raiz))
         return
     prefijo = prefijo_de(texto_claude)
     general = raiz == os.path.join(base, general_de(texto))
-    print("Espacio: %s · %s" % (campo(texto, "Espacio") or os.path.basename(base),
+    print("Multiproyecto: %s · %s" % (nombre_multi(texto, base),
                                 "este es su contexto general" if general else
                                 "proyecto con prefijo %s" % prefijo if prefijo else "proyecto sin prefijo en su ficha"))
     if prefijo:
@@ -2056,7 +2356,7 @@ def cmd_versiones(args):
         os.makedirs(os.path.dirname(os.path.join(raiz, args.plan)) or raiz, exist_ok=True)
         with open(os.path.join(raiz, args.plan), "w", encoding="utf-8") as f:
             json.dump(plan, f, ensure_ascii=False, indent=1)
-        print("Plan escrito en %s: córrelo con BRAIN mover --plan %s" % (args.plan, args.plan))
+        print("Plan escrito en %s: córrelo con brainme mover --plan %s" % (args.plan, args.plan))
 
 
 def cmd_migrar(args):
@@ -2093,15 +2393,15 @@ def cmd_migrar(args):
     print("brainme del proyecto: %s · brainme del skill: %s" % (
         version_del_proyecto(claude_md) or "2.0 o anterior", VERSION))
     if not args.aplicar:
-        print("Cambios automáticos (BRAIN migrar --aplicar): %d" % len(cambios))
+        print("Cambios automáticos (brainme migrar --aplicar): %d" % len(cambios))
         for _, desc in cambios:
             print("  - " + desc)
         print("Con ayudantes, después:")
         print("  - Notas sin resumen: %d (ayudante de resúmenes)" % len(notas_sin_resumen(raiz, rels)))
-        print("  - Entregables por ordenar en 05_exports: %d archivos (BRAIN versiones)"
+        print("  - Entregables por ordenar en 05_exports: %d archivos (brainme versiones)"
               % len(plan_entregables(rels)[0]))
         if not leer_config().get("autor"):
-            print("  - Autor de este computador: no definido (BRAIN autor)")
+            print("  - Autor de este computador: no definido (brainme autor)")
         return
     if not cambios:
         print("No hay cambios automáticos pendientes.")
@@ -2126,7 +2426,7 @@ def cmd_migrar(args):
         json.dump({"version": VERSION, "cambios": [k for k, _ in cambios], "copias": copias,
                    "creados": creados, "textos": textos, "carpetas_quitadas": quitadas},
                   f, ensure_ascii=False, indent=1)
-    print("Migración aplicada. Para deshacerla: BRAIN migrar --deshacer")
+    print("Migración aplicada. Para deshacerla: brainme migrar --deshacer")
 
 
 def estado_21(raiz, rels, texto_claude, configurado):
@@ -2155,20 +2455,21 @@ def estado_21(raiz, rels, texto_claude, configurado):
         print("Copias en conflicto de iCloud: %d -> %s" % (len(conflictos), ", ".join(conflictos[:6])))
     por_ordenar = plan_entregables(rels)[0]
     if por_ordenar:
-        print("Entregables por ordenar en 05_exports: %d archivos (BRAIN versiones)" % len(por_ordenar))
+        print("Entregables por ordenar en 05_exports: %d archivos (brainme versiones)" % len(por_ordenar))
     entradas = entradas_bitacora(leer_texto(os.path.join(raiz, BITACORA))[0])
     if entradas:
         print("Bitácora (últimas %d):" % min(3, len(entradas)))
         for e in entradas[-3:]:
             print("  %s %s · %s" % (e["fecha"], e["hora"], e["linea"][:160]))
     if not leer_config().get("autor"):
-        print("Autor de este computador: no definido (BRAIN autor)")
+        print("Autor de este computador: no definido (brainme autor)")
 
 
 # --------------------------------------------------------------- jardín
 
 JARDIN = os.path.join(".brainme", "jardin.json")
 UMBRAL_JARDIN = 15
+TANDA_JARDIN = 20
 MIN_NOTAS_TEMA = 6
 RE_FECHA = re.compile(r"\d{4}-\d{2}-\d{2}")
 RE_ORIGEN_INBOX = re.compile(r"^(.+?)\s*\(inbox,\s*(\d{4}-\d{2}-\d{2})\)")
@@ -2187,12 +2488,61 @@ def de_memoria(rel):
     return vigente(rel) and rel.split("/")[0] in CARPETAS_ATOMICAS
 
 
-def ultimo_jardin(raiz):
+def registro_jardin(raiz):
+    """{"ultimo": fecha del último jardín cerrado, "revisadas": {nota: huella}}."""
     try:
         with open(os.path.join(raiz, JARDIN), encoding="utf-8") as f:
-            return json.load(f).get("ultimo")
-    except (OSError, ValueError, AttributeError):
-        return None
+            reg = json.load(f)
+    except (OSError, ValueError):
+        reg = {}
+    reg = reg if isinstance(reg, dict) else {}
+    if not isinstance(reg.get("revisadas"), dict):
+        reg["revisadas"] = {}
+    if not isinstance(reg.get("dejadas"), list):
+        reg["dejadas"] = []
+    return reg
+
+
+def guardar_jardin(raiz, reg):
+    os.makedirs(os.path.join(raiz, ".brainme"), exist_ok=True)
+    with open(os.path.join(raiz, JARDIN), "w", encoding="utf-8") as f:
+        json.dump(reg, f, ensure_ascii=False, indent=1, sort_keys=True)
+
+
+CAMPOS_HUELLA = ("certeza", "como_se_sabe", "estado", "decidido_por", "reemplaza_a", "fiabilidad", "leido", "origen")
+
+
+def enlace_plano(nombre, texto):
+    """Un enlace interno según a qué nota apunta, sin carpeta: moverla o pasarlo a wikilink no lo cambia."""
+    nombre = clave(unquote(nombre).strip().rsplit("/", 1)[-1])
+    nombre = nombre[:-3] if nombre.endswith(".md") else nombre
+    texto = texto.strip("|\\ ")
+    return "[[%s%s]]" % (nombre, "|" + texto if texto and clave(texto) != nombre else "")
+
+
+def huella(texto):
+    """Cambia cuando cambia lo que la nota dice: su texto, a qué notas enlaza o cómo se sabe.
+    El resumen, los tags y la carpeta de un enlace no la cambian."""
+    fm = leer_fm(texto)
+    cuerpo = re.sub(r"\A---\n.*?\n---[ \t]*(?:\n|\Z)", "", texto, flags=re.S)
+
+    def md(m):
+        url = m.group(3).strip("<>")
+        return m.group(0) if es_url_externa(url) else enlace_plano(url.split("#", 1)[0], m.group(2))
+
+    cuerpo = RE_WIKI.sub(lambda m: enlace_plano(partir_wiki(m.group(2))[0], partir_wiki(m.group(2))[2]),
+                         RE_MDLINK.sub(md, cuerpo))
+    partes = [fm.get(k) or "" for k in CAMPOS_HUELLA]
+    return hashlib.sha1("\n".join(partes + [re.sub(r"\s+", " ", cuerpo).strip()]).encode("utf-8")).hexdigest()[:16]
+
+
+def por_revisar(raiz, info):
+    """Notas de memoria nuevas, o que cambiaron desde que el jardín las revisó: primero los
+    supuestos, luego conocimiento, decisiones, preguntas y fuentes, de lo último a lo más viejo."""
+    revisadas = registro_jardin(raiz)["revisadas"]
+    faltan = [r for r in info if de_memoria(r) and revisadas.get(clave(nombre_nota(r))) != info[r][2]]
+    faltan.sort(key=lambda r: (info[r][1], r), reverse=True)
+    return sorted(faltan, key=lambda r: (not es_supuesto(info[r][0]), r.split("/")[0]))
 
 
 def fecha_de_cambio(raiz, rel, texto):
@@ -2210,25 +2560,51 @@ def fecha_de_cambio(raiz, rel, texto):
 
 
 def datos_de_notas(raiz, rels):
-    """{nota: (frontmatter, fecha de cambio)} de las notas de la estructura."""
+    """{nota: (frontmatter, fecha de cambio, huella)} de las notas de la estructura."""
     info = {}
     for r in notas_resumibles(rels):
         texto = leer_texto(os.path.join(raiz, r))[0] or ""
-        info[r] = (leer_fm(texto), fecha_de_cambio(raiz, r, texto))
+        info[r] = (leer_fm(texto), fecha_de_cambio(raiz, r, texto), huella(texto))
     return info
 
 
-def original_de(raiz, fm):
-    """El original que el inbox archivó y del que salió la nota, si sigue ahí."""
-    m = RE_ORIGEN_INBOX.match(fm.get("origen") or "")
-    carpeta = os.path.join(raiz, ".brainme", "inbox-procesado", m.group(2)) if m else ""
-    if not m or not os.path.isdir(carpeta):
-        return None
-    nombre = clave(m.group(1).strip())
-    for a in sorted(os.listdir(carpeta)):
-        if clave(a) == nombre or clave(os.path.splitext(a)[0]) == nombre:
-            return ".brainme/inbox-procesado/%s/%s" % (m.group(2), a)
-    return None
+def archivo_original(raiz, origen, rels):
+    """La ruta del original que nombra un origen: el que archivó el inbox o un archivo del
+    proyecto (un contrato junto a su nota)."""
+    m = RE_ORIGEN_INBOX.match(origen.strip())
+    if m:
+        carpeta = os.path.join(raiz, ".brainme", "inbox-procesado", m.group(2))
+        nombre = clave(m.group(1).strip())
+        for a in sorted(os.listdir(carpeta)) if os.path.isdir(carpeta) else []:
+            if clave(a) == nombre or clave(os.path.splitext(a)[0]) == nombre:
+                return ".brainme/inbox-procesado/%s/%s" % (m.group(2), a)
+    wiki = RE_WIKI.search(origen)
+    nombre = clave((partir_wiki(wiki.group(2))[0] if wiki else m.group(1) if m else origen).strip().rsplit("/", 1)[-1])
+    base = os.path.join(raiz, ".brainme", "inbox-procesado")
+    if not m and nombre and "." in nombre:  # sin fecha: el más reciente con ese nombre
+        for d in sorted(os.listdir(base), reverse=True) if os.path.isdir(base) else []:
+            for a in os.listdir(os.path.join(base, d)) if os.path.isdir(os.path.join(base, d)) else []:
+                if clave(a) == nombre:
+                    return ".brainme/inbox-procesado/%s/%s" % (d, a)
+    return next((r for r in rels if nombre and not r.endswith(".md")
+                 and clave(r.rsplit("/", 1)[-1]) == nombre), None)
+
+
+def originales_de(raiz, rel, rels):
+    """Los originales de la nota: el de su origen (o el PDF o la página de una fuente) y los
+    que nombran sus ## Actualizaciones con «origen: ...»."""
+    texto = leer_texto(os.path.join(raiz, rel))[0] or ""
+    fm = leer_fm(texto)
+    hallados = [archivo_original(raiz, fm.get(k) or "", rels) for k in ("origen", "pdf")]
+    if not any(hallados):
+        hallados.append(fm.get("source_url"))
+    s = re.search(r"^## Actualizaciones[ \t]*\n(.*?)(?=^## |\Z)", texto, re.M | re.S)
+    for m in re.finditer(r"origen:\s*(\[\[[^\]]+\]\]|.+?\(inbox,\s*\d{4}-\d{2}-\d{2}\)|[^\s·()]+\.\w{2,5}\b)", s.group(1) if s else ""):
+        hallados.append(archivo_original(raiz, m.group(1), rels))
+    hallados = [h for h in dict.fromkeys(hallados) if h]
+    if not hallados and clave(fm.get("origen") or "").startswith("conversaci"):
+        return "%s, sin original" % fm["origen"]
+    return "original: " + ", ".join(hallados) if hallados else ""
 
 
 def palabras_de_nombre(nombre, prefijo):
@@ -2237,7 +2613,7 @@ def palabras_de_nombre(nombre, prefijo):
     return {p for p in re.split(r"[-_\s]+", clave(nombre)) if len(p) > 1 and p not in PALABRAS_VACIAS}
 
 
-def posibles_duplicados(rels, prefijo, n=10):
+def posibles_duplicados(rels, prefijo, n=30):
     """Pares de notas de la misma carpeta con nombres casi iguales."""
     por_carpeta = {}
     for r in rels:
@@ -2266,26 +2642,81 @@ def originales_desde(raiz, ultimo):
     return total
 
 
+def claves_de_notas(nombres):
+    claves = [clave(n.strip().strip("![]").split("|")[0].split("#")[0].rsplit("/", 1)[-1]) for n in nombres]
+    return [n[:-3] if n.endswith(".md") else n for n in claves]
+
+
+def dejar_en_jardin(raiz, info, nombres):
+    """El usuario decide dejar como está una nota suelta o archivada, un enlace roto, o dos notas
+    parecidas sin fusionar."""
+    pedidas = sorted(set(claves_de_notas(nombres)))
+    rotos = set(claves_de_notas(t for _, t in mapa_de_enlaces(raiz, listar_archivos(raiz))[3]))
+    ajenas = [n for n in pedidas if n not in {clave(nombre_nota(r)) for r in info} | rotos]
+    if ajenas or len(pedidas) > 2:
+        print("--dejar lleva una nota, un enlace roto o un par de notas%s." % (": no encuentro " + ", ".join(ajenas) if ajenas else ""))
+        sys.exit(2)
+    reg = registro_jardin(raiz)
+    reg["dejadas"] = sorted(set(reg["dejadas"]) | {" ~ ".join(pedidas)})
+    guardar_jardin(raiz, reg)
+    print("Queda así, y el jardín no lo vuelve a listar: %s." % " ~ ".join("[[%s]]" % n for n in pedidas))
+
+
+def marcar_jardin(raiz, info, nombres, tanda, sin_revisar):
+    """Anota las notas revisadas; sin nombres, cierra el jardín si no queda ninguna por revisar."""
+    reg = registro_jardin(raiz)
+    memoria = {clave(nombre_nota(r)): r for r in info if de_memoria(r)}
+    pedidas = claves_de_notas(nombres)
+    ajenas = [n for n in pedidas if n not in memoria]
+    if ajenas:
+        print("No encuentro estas notas, y no anoté ninguna: %s" % ", ".join(ajenas))
+        sys.exit(2)
+    if tanda:
+        pedidas += [n for n in reg.get("tanda") or [] if n in memoria]
+        if not pedidas:
+            print("No hay una tanda por anotar: córrela con brainme jardin.")
+            sys.exit(2)
+    saltadas = [clave(nombre_nota(r)) for r in por_revisar(raiz, info)] if sin_revisar else []
+    for n in pedidas + saltadas:
+        reg["revisadas"][n] = info[memoria[n]][2]
+    if tanda:
+        reg["tanda"] = []
+    reg["revisadas"] = {n: h for n, h in reg["revisadas"].items() if n in memoria}
+    guardar_jardin(raiz, reg)
+    faltan = por_revisar(raiz, info)
+    if pedidas:
+        print("Revisadas: %d. Por revisar: %d." % (len(set(pedidas)), len(faltan)))
+        return
+    if saltadas:
+        print("Quedan sin revisar, por decisión del usuario: %s." % cuantos(len(saltadas), "nota", "notas"))
+    if faltan:
+        print("No cierro el jardín: quedan %s por revisar (brainme jardin)." % cuantos(len(faltan), "nota", "notas"))
+        sys.exit(2)
+    reg.update(ultimo=datetime.date.today().isoformat(), autor=leer_config().get("autor"))
+    guardar_jardin(raiz, reg)
+    print("Jardín cerrado el %s. brainme estado avisa cuando vuelva a tocar." % reg["ultimo"])
+
+
 def cmd_jardin(args):
     """Lista de trabajo del jardín, de lo que cambia más rápido a lo estable."""
     raiz = os.path.abspath(args.raiz)
-    if args.hecho:
-        hoy = datetime.date.today().isoformat()
-        os.makedirs(os.path.join(raiz, ".brainme"), exist_ok=True)
-        with open(os.path.join(raiz, JARDIN), "w", encoding="utf-8") as f:
-            json.dump({"ultimo": hoy, "autor": leer_config().get("autor")}, f, ensure_ascii=False, indent=1)
-        print("Jardín revisado el %s. BRAIN estado avisa cuando vuelva a tocar." % hoy)
-        return
     rels = listar_archivos(raiz)
-    prefijo = prefijo_de(leer_texto(os.path.join(raiz, "CLAUDE.md"))[0] or "")
+    anotar_historia(raiz, rels)
     info = datos_de_notas(raiz, rels)
+    if args.hecho is not None:
+        marcar_jardin(raiz, info, args.hecho, args.tanda, args.sin_revisar)
+        return
+    if args.dejar:
+        dejar_en_jardin(raiz, info, args.dejar)
+        return
+    dejadas = set(registro_jardin(raiz)["dejadas"])
+    prefijo = prefijo_de(leer_texto(os.path.join(raiz, "CLAUDE.md"))[0] or "")
     vigentes = [r for r in info if de_memoria(r)]
-    ultimo = ultimo_jardin(raiz)
-    cambiadas = sorted((r for r in vigentes if not ultimo or info[r][1] > ultimo),
-                       key=lambda r: (info[r][1], r), reverse=True)
-    print("Jardín: %s: %s nuevas o editadas, %s del inbox." % (
-        "último el %s. Desde entonces" % ultimo if ultimo else "nunca revisado. En total",
-        cuantos(len(cambiadas), "nota", "notas"),
+    ultimo = registro_jardin(raiz).get("ultimo")
+    faltan = por_revisar(raiz, info)
+    tanda = faltan[:TANDA_JARDIN]
+    print("Jardín: %s. Por revisar: %s. Del inbox: %s." % (
+        "último el %s" % ultimo if ultimo else "nunca cerrado", cuantos(len(faltan), "nota", "notas"),
         cuantos(originales_desde(raiz, ultimo), "original procesado", "originales procesados")))
 
     datos = mapa_de_enlaces(raiz, rels)
@@ -2318,35 +2749,42 @@ def cmd_jardin(args):
         return [x for _, x in sorted(puntos)[:3]]
 
     estado_tablero(raiz)
-    sup = [r for r in vigentes if es_supuesto(info[r][0])]
+    if tanda:
+        print("Esta tanda (%d de %d), contra su original y las de su mismo tema:" % (len(tanda), len(faltan)))
+    for r in tanda:
+        fm = info[r][0]
+        original, tema = originales_de(raiz, r, rels), mismo_tema(r)
+        print("  [[%s]] (%s)%s%s%s" % (
+            nombre_nota(r), info[r][1],
+            " · supuesto: " + (fm.get("como_se_sabe") or "sin anotar cómo se sabe") if es_supuesto(fm) else "",
+            " · " + original if original else "", " · mismo tema: " + lista_notas(tema) if tema else ""))
+    reg = registro_jardin(raiz)
+    if reg.get("tanda") != [clave(nombre_nota(r)) for r in tanda]:
+        reg["tanda"] = [clave(nombre_nota(r)) for r in tanda]
+        guardar_jardin(raiz, reg)
+    if tanda:
+        print("Para leerlas con sus originales: brainme leer --tanda")
+        print("Cuando las hayas revisado todas: brainme jardin --hecho --tanda (o --hecho <notas>, si solo algunas)%s" % (
+            ". Quedan %d para las tandas que siguen." % (len(faltan) - len(tanda)) if len(faltan) > len(tanda) else ""))
+    sup = sorted(r for r in vigentes if es_supuesto(info[r][0]) and r not in faltan)
     if sup:
-        print("Supuestos sin confirmar (%d):" % len(sup))
-        for r in sup[:15]:
-            print("  [[%s]] · cómo se sabe: %s" % (nombre_nota(r), info[r][0].get("como_se_sabe") or "sin anotar"))
-    if cambiadas:
-        print("Nuevas o editadas, para verificar contra su original y las de su mismo tema (%d):"
-              % len(cambiadas))
-        for r in cambiadas[:20]:
-            original, tema = original_de(raiz, info[r][0]), mismo_tema(r)
-            print("  [[%s]] (%s)%s%s" % (nombre_nota(r), info[r][1], " · original: " + original if original else "",
-                                         " · mismo tema: " + lista_notas(tema) if tema else ""))
-        if len(cambiadas) > 20:
-            print("  ... y %d más" % (len(cambiadas) - 20))
-    duplicados = posibles_duplicados(vigentes, prefijo)
+        print("Supuestos ya revisados que siguen sin confirmar (%d): %s" % (len(sup), lista_notas(sup, len(sup))))
+    duplicados = [(a, b) for a, b in posibles_duplicados(vigentes, prefijo, 1000)
+                  if " ~ ".join(sorted((clave(nombre_nota(a)), clave(nombre_nota(b))))) not in dejadas][:30]
     if duplicados:
         print("Posibles duplicados, por nombre: " + ", ".join(
             "[[%s]] ~ [[%s]]" % (nombre_nota(a), nombre_nota(b)) for a, b in duplicados))
 
     for r in sorted(info):
-        if vigente(r) or r.startswith("03_open_questions/"):
+        if vigente(r) or r.startswith("03_open_questions/") or clave(nombre_nota(r)) in dejadas:
             continue
-        desde = sorted(x for x in datos[2][r] if vigente(x))
+        por = info[r][0].get("reemplazada_por")
+        desde = sorted(x for x in datos[2][r] if vigente(x) and clave(nombre_nota(x)) not in claves_de_notas([por or ""]))
         if desde:
-            por = info[r][0].get("reemplazada_por")
             print("Enlaces a la nota archivada [[%s]]%s: en %s" % (
                 nombre_nota(r), " (reemplazada por %s)" % por if por else "", lista_notas(desde)))
     print(linea_mapa(datos))
-    detalle_mapa(datos)
+    detalle_mapa(datos, dejadas)
 
     conteo, con_tema = {}, set()
     for r in vigentes:
@@ -2365,7 +2803,7 @@ def cmd_jardin(args):
            and (info[r][0].get("tipo") or "conocimiento").lower() == "conocimiento"]
     if sin:
         print("Notas de conocimiento sin certeza: %d (márcala al verificar cada una)" % len(sin))
-    print("Al terminar: BRAIN jardin --hecho")
+    print("Para cerrarlo, sin notas por revisar: brainme jardin --hecho")
 
 
 def cmd_archivar(args):
@@ -2395,13 +2833,13 @@ def cmd_archivar(args):
             nombre_nota(reg["de"]), carpeta_de(reg["de"])))
         return
     if not args.nota:
-        print("Uso: BRAIN archivar <nota> [--por <nota>] [--repuntar] | --deshacer")
+        print("Uso: brainme archivar <nota> [--por <nota>] [--repuntar] | --deshacer")
         sys.exit(1)
     rels = listar_archivos(raiz)
     vigentes = [r for r in notas_resumibles(rels) if vigente(r)]
     r = buscar_nota(vigentes, args.nota)
     if r.split("/")[0] not in ("01_knowledge", "02_decisions", "04_sources"):
-        print("Se archivan notas de 01_knowledge, 02_decisions y 04_sources; las preguntas se gradúan (flujo 4).")
+        print("Se archivan notas de 01_knowledge, 02_decisions y 04_sources; las preguntas se gradúan (flujo Preguntas abiertas).")
         sys.exit(1)
     por = buscar_nota(vigentes, args.por) if args.por else None
     if por == r or (args.repuntar and not por):
@@ -2423,20 +2861,24 @@ def cmd_archivar(args):
         if texto is None:
             continue
         if rel.lower().endswith(".md"):
-            def fw(m, n, rel=rel):
+            # La nota que queda cuenta de dónde viene: su mención a la archivada no se repunta a sí misma
+            repunta = args.repuntar and rel != por
+            apunta = nuevo_nombre if repunta else nombre
+
+            def fw(m, n, rel=rel, repunta=repunta, apunta=apunta):
                 obj, frag, alias = partir_wiki(m.group(2))
-                if not obj or layout.resolver_wiki(obj, rel) != r or (not args.repuntar and "/" not in obj):
+                if not obj or layout.resolver_wiki(obj, rel) != r or (not repunta and "/" not in obj):
                     return None
                 cuenta[0] += 1
-                return "%s[[%s%s%s]]" % (m.group(1), nuevo_nombre, "" if args.repuntar else frag, alias)
+                return "%s[[%s%s%s]]" % (m.group(1), apunta, "" if repunta else frag, alias)
 
-            def fm_(m, n, rel=rel):
+            def fm_(m, n, rel=rel, apunta=apunta):
                 url = m.group(3)
                 limpia = (url[1:-1] if url.startswith("<") else url).split("#", 1)[0]
                 if not limpia or es_url_externa(limpia) or layout.resolver_md(limpia, rel)[0] != r:
                     return None
                 cuenta[0] += 1
-                return "%s[[%s|%s]]" % (m.group(1), nuevo_nombre, m.group(2))
+                return "%s[[%s|%s]]" % (m.group(1), apunta, m.group(2))
 
             nuevo = transformar_enlaces(texto, fw, fm_)
         else:
@@ -2474,11 +2916,12 @@ def cmd_archivar(args):
     if cuenta[0]:
         print("%s %s en %s." % ("Reapunté a [[%s]]" % nuevo_nombre if args.repuntar else "Corregí con su nombre",
                                 cuantos(cuenta[0], "enlace", "enlaces"), cuantos(len(cambios), "archivo", "archivos")))
-    print("Para deshacer: BRAIN archivar --deshacer")
+    print("Para deshacer: brainme archivar --deshacer")
 
 
 def estado_32(raiz, rels):
     """Líneas de estado que agregó brainme 3.2: supuestos y cuándo toca el jardín."""
+    anotar_historia(raiz, rels)
     info = datos_de_notas(raiz, rels)
     vigentes = [r for r in info if de_memoria(r)]
     sup = [r for r in vigentes if es_supuesto(info[r][0])]
@@ -2492,12 +2935,442 @@ def estado_32(raiz, rels):
         print("Archivos sin ficha: %s -> %s (dales ficha o enlázalos desde una nota)" % (
             ", ".join(cuantos(n, UNO_CAT.get(c, c), NOMBRES_CAT.get(c, c)) for c, n in sorted(cats.items())),
             ", ".join(r.rsplit("/", 1)[-1] for r in sin[:6]) + (" ..." if len(sin) > 6 else "")))
-    ultimo = ultimo_jardin(raiz)
-    cambiadas = [r for r in vigentes if not ultimo or info[r][1] > ultimo]
-    if len(cambiadas) >= UMBRAL_JARDIN:
-        print("Jardín: %s (toca revisar el jardín)" % (
-            "último el %s, y desde entonces hay %d notas nuevas o editadas" % (ultimo, len(cambiadas))
-            if ultimo else "nunca revisado, con %d notas" % len(cambiadas)))
+    ultimo, faltan = registro_jardin(raiz).get("ultimo"), por_revisar(raiz, info)
+    if len(faltan) >= UMBRAL_JARDIN:
+        print("Jardín: %s, con %d notas por revisar (toca revisar el jardín)" % (
+            "último el %s" % ultimo if ultimo else "nunca cerrado", len(faltan)))
+
+
+# ------------------------------------------------------------ buscar
+
+VACIAS_BUSCAR = (PALABRAS_VACIAS - {"decision", "pregunta"}) | {
+    "sobre", "cual", "cuales", "como", "donde", "cuando", "quien", "hay", "son", "lo", "nos", "le", "fue",
+    "cuanto", "cuanta", "cuantos", "cuantas", "quienes", "sabemos", "dice", "dicen", "tenemos", "va", "van", "ser", "esta", "estan"}
+MAX_BUSCAR = 12
+
+
+def plano(s):
+    """Minúsculas y sin tildes."""
+    return "".join(c for c in unicodedata.normalize("NFKD", s.lower()) if not unicodedata.combining(c))
+
+
+def raiz_de_palabra(p):
+    """Quita el plural (precios -> precio, decisiones -> decision), la r del infinitivo (durar ->
+    dura) y, en palabras largas, la terminación (estratifican y estratificación -> estratif)."""
+    if len(p) > 4 and re.search(r"[aei]r$", p):
+        p = p[:-1]
+    elif len(p) > 4 and re.search(r"[lrdnzjs]es$", p):
+        p = p[:-2]
+    elif len(p) > 3 and p.endswith("s"):
+        p = p[:-1]
+    return p[:max(8, len(p) - 5)] if len(p) >= 10 and p.isalpha() else p
+
+
+def patrones_de(terminos):
+    palabras = re.findall(r"[^\W_]+", plano(" ".join(terminos)))
+    utiles = [p for p in palabras if p not in VACIAS_BUSCAR] or palabras
+    raices = {raiz_de_palabra(p): p for p in reversed(utiles)}
+    return [(raices[r], re.compile(r"(?<![^\W_])" + re.escape(r))) for r in reversed(list(raices))]
+
+
+def linea_con(texto, patrones, largo=160):
+    """La línea que tiene más de las palabras buscadas."""
+    mejor, puntos = "", 0
+    for linea in texto.split("\n"):
+        n = sum(1 for _, p in patrones if p.search(plano(linea)))
+        if n > puntos and not linea.lstrip().startswith("#"):
+            mejor, puntos = re.sub(r"\s+", " ", linea).strip(" -*>"), n
+    return mejor if len(mejor) <= largo else mejor[:largo - 1] + "…"
+
+
+def buscar_en_notas(raiz, patrones):
+    """[(cuántas palabras tiene, puntaje, nota, cuerpo)], de la mejor a la peor. Pesan más el
+    nombre, el título, los tags y el resumen que el cuerpo, y lo que se sabe (01 a 03) que las
+    fuentes y los entregables."""
+    halladas = []
+    for r in notas_resumibles(listar_archivos(raiz)):
+        texto = leer_texto(os.path.join(raiz, r))[0] or ""
+        fm = leer_fm(texto)
+        cuerpo = re.sub(r"\A---\n.*?\n---[ \t]*(?:\n|\Z)", "", texto, flags=re.S)
+        campos = [(4, plano(nombre_nota(r).replace("-", " "))), (4, plano(fm.get("titulo") or "")),
+                  (3, plano(fm.get("tags") or "")), (3, plano(" ".join(fm.get(k) or "" for k in CAMPOS_RESUMEN))),
+                  (1, plano(cuerpo))]
+        tiene = [max([peso for peso, c in campos if p.search(c)] or [0]) for _, p in patrones]
+        if any(tiene):
+            veces = sum(min(3, len(p.findall(campos[-1][1]))) for _, p in patrones)
+            halladas.append((sum(1 for x in tiene if x), sum(tiene) + veces / 10 + (r[:2] in ("01", "02", "03")) * 3,
+                             r, cuerpo))
+    return sorted(halladas, key=lambda h: (-h[0], -h[1], h[2]))
+
+
+def ultima_actualizacion(cuerpo, largo=160):
+    """La última línea con fecha de ## Actualizaciones: lo que la nota dice hoy."""
+    s = re.search(r"^## Actualizaciones[ \t]*\n(.*?)(?=^## |\Z)", cuerpo, re.M | re.S)
+    lineas = re.findall(r"^\s*[-*]\s*(\d{4}-\d{2}-\d{2}.*)$", s.group(1), re.M) if s else []
+    ultima = max(enumerate(lineas), key=lambda x: (x[1][:10], x[0]))[1] if lineas else ""
+    return ultima if len(ultima) <= largo else ultima[:largo - 1] + "…"
+
+
+def mostrar_notas(raiz, titulo, lista, patrones, tope=MAX_BUSCAR):
+    if not lista:
+        return
+    print("%s (%d):" % (titulo, len(lista)))
+    for _, _, r, cuerpo in lista[:tope]:
+        frase = linea_con(cuerpo, patrones)
+        print("  %s (%s)%s" % (con_resumen(raiz, r), carpeta_de(r), "\n      … " + frase if frase else ""))
+        ultima = ultima_actualizacion(cuerpo)
+        if ultima and ultima[:60] not in frase:
+            print("      última actualización: " + ultima)
+    if len(lista) > tope:
+        print("  ... y %d más: agrega una palabra para acotar" % (len(lista) - tope))
+
+
+def cmd_buscar(args):
+    """Notas que hablan de lo buscado: primero las que tienen todas las palabras. Después, el
+    contexto general, los originales del inbox y la bitácora."""
+    raiz = os.path.abspath(args.raiz)
+    busquedas = [b for b in " ".join(args.palabras).split(",") if patrones_de([b])]
+    if not busquedas:
+        print("Dime qué buscar: brainme buscar <palabras>, o varias búsquedas separadas con comas")
+        sys.exit(2)
+    anotar_historia(raiz, listar_archivos(raiz))
+    for b in busquedas:
+        if len(busquedas) > 1:
+            print("=== %s" % b.strip())
+        buscar_una(raiz, patrones_de([b]), 5 if len(busquedas) > 1 else MAX_BUSCAR)
+
+
+def buscar_una(raiz, patrones, tope):
+    buscado, n = ", ".join(r for r, _ in patrones), len(patrones)
+    minimo = min(2, n)  # con menos palabras, la coincidencia dice poco
+    halladas = buscar_en_notas(raiz, patrones)
+    todas = [h for h in halladas if h[0] == n]
+    parte = [h for h in halladas if h[0] < n] if len(todas) < 5 else []
+    if not halladas:
+        print("Ninguna nota habla de: %s." % buscado)
+    mostrar_notas(raiz, "Notas con: %s" % buscado, [h for h in todas if vigente(h[2])], patrones, tope)
+    mostrar_notas(raiz, "Con algunas de esas palabras", [h for h in parte if vigente(h[2])], patrones, tope)
+    mostrar_notas(raiz, "Archivadas", [h for h in todas + parte if not vigente(h[2]) and h[0] >= minimo], patrones, tope)
+
+    base, texto = buscar_multi(raiz)
+    general = os.path.join(base, general_de(texto)) if base and general_de(texto) else ""
+    if os.path.isdir(general) and os.path.realpath(general) != os.path.realpath(raiz):
+        mostrar_notas(general, "En el contexto general (%s/)" % os.path.basename(general),
+                      [h for h in buscar_en_notas(general, patrones) if vigente(h[2]) and h[0] >= minimo], patrones, 6)
+
+    def textos_con(carpeta):
+        hallados = []
+        for d, _, archivos in os.walk(os.path.join(raiz, carpeta)):
+            for a in sorted(archivos):
+                texto = leer_texto(os.path.join(d, a))[0]
+                tiene = sum(1 for _, p in patrones if p.search(plano(texto))) if texto else 0
+                if tiene:
+                    hallados.append((tiene, os.path.relpath(os.path.join(d, a), raiz).replace(os.sep, "/"), texto))
+        return sorted(hallados, key=lambda o: (o[0], o[1]), reverse=True)
+
+    pendientes = [o for o in textos_con("00_inbox") if o[0] >= minimo] or textos_con("00_inbox")[:3]
+    if pendientes:
+        print("En el inbox, sin procesar (%d):" % len(pendientes))
+        for _, rel, texto in pendientes[:tope]:
+            print("  %s\n      … %s" % (rel, linea_con(texto, patrones)))
+    originales = textos_con(os.path.join(".brainme", "inbox-procesado"))
+    # Con una sola de las palabras, solo si nada coincide más, y pocos
+    originales = [o for o in originales if o[0] >= minimo] or originales[:3]
+    if originales:
+        print("Originales del inbox (%d; con todas las palabras, %d):" % (
+            len(originales), sum(1 for o in originales if o[0] == n)))
+        for _, rel, texto in originales[:tope]:
+            print("  %s\n      … %s" % (rel, linea_con(texto, patrones)))
+        if len(originales) > tope:
+            print("  ... y %d más" % (len(originales) - tope))
+    lineas = [l.strip(" -") for l in (leer_texto(os.path.join(raiz, BITACORA))[0] or "").split("\n")
+              if sum(1 for _, p in patrones if p.search(plano(l))) >= minimo]
+    if lineas:
+        print("Bitácora (%d): %s" % (len(lineas), " / ".join(l[:160] for l in lineas[-3:])))
+    rels = listar_archivos(raiz)
+    ciegos = archivos_sin_ficha(raiz, rels) + [r for r in rels if r.startswith("00_inbox/") and categoria(r) in CON_FICHA]
+    if ciegos and not todas:
+        print("Sin leer, porque no tienen ficha (%d): %s" % (
+            len(ciegos), ", ".join(r.rsplit("/", 1)[-1] for r in ciegos[:6]) + (" ..." if len(ciegos) > 6 else "")))
+
+
+# ------------------------------------------------------------ leer
+
+MAX_LEER = 24000
+MAX_ORIGINAL = 5000
+
+
+def cmd_leer(args):
+    """Varias notas completas de una vez; con --originales (o --tanda, las del jardín), también el
+    texto de sus originales, cada uno una sola vez."""
+    raiz = os.path.abspath(args.raiz)
+    rels = listar_archivos(raiz)
+    anotar_historia(raiz, rels)
+    notas = {clave(nombre_nota(r)): r for r in rels if r.endswith(".md") and not aparte(r)}
+    pedidas = list(registro_jardin(raiz).get("tanda") or []) if args.tanda else []
+    sueltas_ = []
+    for n in args.notas:
+        ruta = n.strip().strip("[]")
+        k = claves_de_notas([n])[0]
+        if k in notas:
+            pedidas.append(k)
+        elif os.path.isfile(os.path.join(raiz, ruta)) and os.path.realpath(os.path.join(raiz, ruta)).startswith(os.path.realpath(raiz) + os.sep):
+            sueltas_.append(ruta)
+        else:
+            print("No encuentro %s." % n)
+    pedidas = [k for k in dict.fromkeys(pedidas) if k in notas]
+    if not pedidas and not sueltas_:
+        print("Dime qué leer: brainme leer <nota> ... [--originales], o --tanda")
+        sys.exit(2)
+    gastado, quedan, vistos = 0, [], set()
+
+    def imprimir(titulo, texto):
+        bloque = "=== %s\n\n%s\n" % (titulo, texto.strip())
+        print(bloque)
+        return len(bloque)
+
+    for k in pedidas:
+        if gastado > MAX_LEER:
+            quedan.append(k)
+            continue
+        texto = leer_texto(os.path.join(raiz, notas[k]))[0] or ""
+        gastado += imprimir(notas[k], texto)
+        if not (args.originales or args.tanda):
+            continue
+        for rel in originales_de(raiz, notas[k], rels).replace("original: ", "", 1).split(", "):
+            if rel in vistos or not os.path.isfile(os.path.join(raiz, rel)):
+                continue
+            vistos.add(rel)
+            t = leer_texto(os.path.join(raiz, rel))[0]
+            gastado += imprimir("original: " + rel, t[:MAX_ORIGINAL] + (
+                "\n… (sigue: léelo completo con Read)" if len(t) > MAX_ORIGINAL else "") if t else "(léelo con Read o con brainme texto)")
+    for ruta in sueltas_:
+        t = leer_texto(os.path.join(raiz, ruta))[0]
+        gastado += imprimir(ruta, t if t else "(léelo con Read o con brainme texto)")
+    if quedan:
+        print("Faltan %d: brainme leer %s%s" % (len(quedan), " ".join(quedan), " --originales" if args.originales or args.tanda else ""))
+
+
+# ------------------------------------------------------------ inbox y procesado
+
+RESERVAS = os.path.join(".brainme", "inbox.json")
+LARGO_INBOX = 3000
+EXT_TEXTO = {".md", ".txt", ".vtt", ".srt", ".html", ".htm", ".csv", ".json", ".rtf", ".eml"}
+
+
+def archivos_del_inbox(raiz):
+    return [r for r in listar_archivos(raiz) if r.startswith("00_inbox/")]
+
+
+def reservar_nombres(raiz):
+    """{archivo del inbox: nombre que tendrá al salir}. Se reservan todos juntos, antes de
+    escribir las notas, para que su origen no cambie después."""
+    hoy = datetime.date.today().isoformat()
+    try:
+        with open(os.path.join(raiz, RESERVAS), encoding="utf-8") as f:
+            reg = json.load(f)
+        reservas = reg["nombres"] if reg.get("fecha") == hoy else {}
+    except (OSError, ValueError, KeyError, AttributeError):
+        reservas = {}
+    actuales = archivos_del_inbox(raiz)
+    reservas = {r: n for r, n in reservas.items() if r in actuales}
+    destino = os.path.join(raiz, ".brainme", "inbox-procesado", hoy)
+    archivados = os.listdir(destino) if os.path.isdir(destino) else []
+    visibles = {clave(r.rsplit("/", 1)[-1]) for r in listar_archivos(raiz) if not r.startswith("00_inbox/")}
+    for r in actuales:
+        if r in reservas:
+            continue
+        nombre = r.rsplit("/", 1)[-1]
+        base, ext = os.path.splitext(nombre)
+        usados = {clave(x) for f in archivados + list(reservas.values()) for x in (f, os.path.splitext(f)[0] + ext)}
+        if ext.lower() not in EXT_TEXTO:  # va a una carpeta visible, donde los nombres son únicos
+            usados |= visibles
+        final, n = nombre, 2
+        while clave(final) in usados:
+            final, n = "%s-%d%s" % (base, n, ext), n + 1
+        reservas[r] = final
+    os.makedirs(os.path.join(raiz, ".brainme"), exist_ok=True)
+    with open(os.path.join(raiz, RESERVAS), "w", encoding="utf-8") as f:
+        json.dump({"fecha": hoy, "nombres": reservas}, f, ensure_ascii=False, indent=1, sort_keys=True)
+    return reservas
+
+
+def cmd_inbox(args):
+    """Lo que hay en el inbox y el origen que llevará lo que salga de cada archivo."""
+    raiz = os.path.abspath(args.raiz)
+    anotar_historia(raiz, listar_archivos(raiz))
+    reservas = reservar_nombres(raiz)
+    if not reservas:
+        print("El inbox está vacío.")
+        return
+    hoy = datetime.date.today().isoformat()
+    print("En el inbox (%d):" % len(reservas))
+    for r in sorted(reservas):
+        texto = leer_texto(os.path.join(raiz, r))[0] if os.path.splitext(r)[1].lower() in EXT_TEXTO else None
+        palabras = len(texto.split()) if texto else 0
+        print("  %s · %s · origen: \"%s (inbox, %s)\"" % (
+            r, "%s%s" % (cuantos(palabras, "palabra", "palabras"), ", largo: al lector" if palabras > LARGO_INBOX else "")
+            if texto is not None else os.path.splitext(r)[1].lstrip(".") or "sin extensión", reservas[r], hoy))
+    if NO_DESCARGADOS:
+        print("Sin descargar de iCloud: pide al usuario que los abra (%d)" % len(NO_DESCARGADOS))
+
+
+def cmd_procesado(args):
+    """Saca del inbox un archivo ya procesado, con el nombre que reservó brainme inbox: a
+    .brainme/inbox-procesado/<hoy>/ o a --a. Nunca escribe encima de otro archivo."""
+    raiz = os.path.abspath(args.raiz)
+    inbox, hoy = os.path.realpath(os.path.join(raiz, "00_inbox")), datetime.date.today().isoformat()
+    salen = []
+    for a in args.archivos:
+        ruta = next((r for r in (os.path.join(raiz, a), os.path.join(raiz, "00_inbox", a)) if os.path.isfile(r)), None)
+        if not ruta or not os.path.realpath(ruta).startswith(inbox + os.sep):
+            print("No está en 00_inbox/, y no moví nada: %s" % a)
+            sys.exit(2)
+        salen.append(os.path.relpath(os.path.realpath(ruta), os.path.realpath(raiz)).replace(os.sep, "/"))
+    rel = (args.a or ".brainme/inbox-procesado/%s" % hoy).strip("/")
+    if args.a and (rel.split("/")[0] not in RAICES_ESTRUCTURA - {"00_inbox"} or ".." in rel.split("/")):
+        print("--a va a una carpeta de 01 a 05 (por ejemplo, 01_knowledge).")
+        sys.exit(2)
+    reservas = reservar_nombres(raiz)
+    destino = os.path.join(raiz, rel)
+    os.makedirs(destino, exist_ok=True)
+    for r in salen:
+        ruta, nombre = os.path.join(raiz, r), r.rsplit("/", 1)[-1]
+        final = next((n for k, n in reservas.items() if clave(k) == clave(r)), nombre)
+        base, ext = os.path.splitext(final)
+        usados, n = {clave(x) for x in os.listdir(destino)}, 2
+        if args.a:
+            usados |= {clave(x.rsplit("/", 1)[-1]) for x in listar_archivos(raiz) if not x.startswith("00_inbox/")}
+        while clave(final) in usados:
+            final, n = "%s-%d%s" % (base, n, ext), n + 1
+        os.rename(ruta, os.path.join(destino, final))
+        print("%s -> %s/%s · origen: \"%s (inbox, %s)\"%s" % (
+            nombre, rel, final, final, hoy, " (ya había otro %s: sus notas llevan este origen)" % nombre if final != nombre else ""))
+        carpeta = os.path.realpath(os.path.dirname(ruta))
+        while carpeta.startswith(inbox + os.sep) and not [x for x in os.listdir(carpeta) if x.lower() not in IGNORAR_ARCHIVOS]:
+            shutil.rmtree(carpeta)
+            carpeta = os.path.dirname(carpeta)
+
+
+# ------------------------------------------------------------ llevar al contexto general
+
+MESES = "enero febrero marzo abril mayo junio julio agosto setiembre septiembre octubre noviembre diciembre".split()
+
+
+def nombres_propios(texto):
+    """Palabras con mayúscula que no abren una frase, una viñeta ni un título."""
+    hallados = set()
+    for linea in texto.split("\n"):
+        linea = re.sub(r"^[\s>*#\-\d.]+", "", linea)
+        for m in re.finditer(r"\b([A-ZÁÉÍÓÚÑ][\wáéíóúñÁÉÍÓÚÑ]{2,})", linea):
+            antes = linea[:m.start()].rstrip(" «\"(¿¡*_")
+            if antes and antes[-1] not in ".!?:":
+                hallados.add(m.group(1))
+    return hallados
+
+
+def datos_que_identifican(raiz, texto, prefijo):
+    """{motivo: palabras} de lo que en el texto puede identificar al proyecto."""
+    del_proyecto = set()
+    for r in notas_resumibles(listar_archivos(raiz)):
+        fuente = leer_texto(os.path.join(raiz, r))[0] or ""
+        del_proyecto |= {plano(x) for x in nombres_propios(re.sub(r"\A---\n.*?\n---[ \t]*\n", "", fuente, flags=re.S))}
+    ficha = leer_texto(os.path.join(raiz, "CLAUDE.md"))[0] or ""
+    del_proyecto |= {plano(x) for x in nombres_propios(ficha.split("## Proyecto", 1)[-1] if "## Proyecto" in ficha else "")}
+    palabras = re.findall(r"[^\W\d_]{3,}", texto)
+    propios = {x for x in palabras if plano(x) in del_proyecto and x[0].isupper()} | nombres_propios(texto)
+    hallado = {
+        "nombres": sorted(propios),
+        "cifras": sorted(set(re.findall(r"(?<![\w.])\d[\d.,]*\d|(?<![\w.])\d(?![\w)]|\. )", texto))),
+        "fechas": sorted({x for x in palabras if plano(x) in MESES}),
+        "enlaces a notas del proyecto": sorted({m.group(0) for m in RE_WIKI.finditer(texto)
+                                                if prefijo and clave(partir_wiki(m.group(2))[0]).startswith(clave(prefijo))}),
+        "correos o webs": sorted(set(re.findall(r"\S+@\S+\.\w+|https?://\S+", texto)))}
+    return {k: v for k, v in hallado.items() if v}
+
+
+def cmd_llevar(args):
+    """Revisa que un texto no identifique al proyecto y, con --ok, lo deja en el inbox del contexto
+    general y lo anota en la nota de la que sale."""
+    raiz = os.path.abspath(args.raiz)
+    base, texto_multi = buscar_multi(raiz)
+    general = os.path.join(base, general_de(texto_multi)) if base and general_de(texto_multi) else ""
+    if not os.path.isdir(general) or os.path.realpath(general) == os.path.realpath(raiz):
+        print("Esto se corre desde un proyecto de una carpeta multiproyecto con contexto general.")
+        sys.exit(2)
+    autor = leer_config().get("autor")
+    if not autor:
+        print('Falta el autor: pregúntale su nombre al usuario y corre brainme autor "Nombre".')
+        sys.exit(2)
+    borrador = leer_texto(os.path.join(raiz, args.borrador))[0]
+    if not (borrador or "").strip():
+        print("No encuentro el borrador, o está vacío: %s" % args.borrador)
+        sys.exit(2)
+    if borrador.startswith("---\n"):
+        print("El borrador lleva solo el texto: el frontmatter lo pongo yo.")
+        sys.exit(2)
+    prefijo = prefijo_de(leer_texto(os.path.join(raiz, "CLAUDE.md"))[0] or "")
+    nota = buscar_nota(notas_resumibles(listar_archivos(raiz)), args.de)
+    permitidas = {plano(x) for x in args.permitir or []}
+    hallado = {k: [x for x in v if plano(x) not in permitidas] for k, v in datos_que_identifican(raiz, borrador, prefijo).items()}
+    hallado = {k: v for k, v in hallado.items() if v}
+    if hallado:
+        print("No lo llevo: esto puede identificar al proyecto. Reescríbelo, o pregúntale al usuario y repite con --permitir.")
+        for k, v in hallado.items():
+            print("  %s: %s" % (k, ", ".join(v)))
+        sys.exit(2)
+    hoy = datetime.date.today().isoformat()
+    tema = slug_tag(args.tema) or "aprendizaje"
+    if not args.ok:
+        print("Sin datos que identifiquen al proyecto. Muéstrale al usuario el texto y lo que quitaste; con su OK, repite con --ok:")
+        print("\n" + borrador.strip())
+        return
+    rel, n = "desde-un-proyecto-%s-%s" % (hoy, tema), 2
+    destino = os.path.join(general, "00_inbox", rel + ".md")
+    while os.path.exists(destino):
+        destino, n = os.path.join(general, "00_inbox", "%s-%d.md" % (rel, n)), n + 1
+    os.makedirs(os.path.dirname(destino), exist_ok=True)
+    escribir_texto(destino, '---\nautor: "%s"\nfecha: %s\norigen: "un proyecto, con OK del usuario"\n---\n\n%s\n' % (
+        autor, hoy, borrador.strip()), False)
+    ruta = os.path.join(raiz, nota)
+    texto, crlf = leer_texto(ruta)
+    linea = "- %s: Llevada al contexto general (%s) · %s" % (hoy, hoy, autor)
+    if re.search(r"^## Actualizaciones[ \t]*$", texto, re.M):
+        texto = re.sub(r"(^## Actualizaciones[ \t]*\n(?:(?!^## ).*\n?)*?)(?=\n*(?:^## |\Z))",
+                       lambda m: m.group(1).rstrip("\n") + "\n" + linea + "\n", texto, count=1, flags=re.M)
+    else:
+        texto = texto.rstrip("\n") + "\n\n## Actualizaciones\n" + linea + "\n"
+    escribir_texto(ruta, texto, crlf)
+    print("Llevado a %s/00_inbox/%s, y anotado en [[%s]]. El contexto general lo procesa en su próxima sesión." % (
+        os.path.basename(general), os.path.basename(destino), nombre_nota(nota)))
+
+
+# ------------------------------------------------------------ guías
+
+SKILL_DIR = os.path.dirname(PLANTILLAS)
+GUIAS = {"inbox": ("references/inbox.md", "templates/note.md", "references/redaccion.md"),
+         "guardar": ("templates/note.md", "references/redaccion.md"),
+         "entregables": ("references/entregables.md", "templates/deliverable-card.md", "references/redaccion.md"),
+         "jardin": ("references/jardin.md", "templates/tema.md"),
+         "fuentes": ("templates/web-source.md", "templates/literature-note.md"),
+         "handoff": ("references/handoff.md", "templates/note.md"),
+         "multiproyecto": ("references/multiproyecto.md", "templates/CLAUDE-multiproyecto.md"), "configurar": ("references/configurar.md",),
+         "ordenar": ("references/ordenar.md",), "migrar": ("references/migrar.md",), "redaccion": ("references/redaccion.md",)}
+
+
+def cmd_guia(args):
+    """Las guías de un flujo, con las plantillas y reglas que usa, en una sola lectura."""
+    nombres = [plano(n) for n in args.nombres]
+    ajenas = [n for n in nombres if n not in GUIAS and n != "convenciones"]
+    if ajenas:
+        print("No hay guía %s. Hay: convenciones, %s." % (", ".join(ajenas), ", ".join(sorted(GUIAS))))
+        sys.exit(2)
+    print("Si el comando brainme no existe: python3 \"%s\"" % os.path.abspath(__file__))
+    if "convenciones" in nombres:
+        texto = leer_texto(os.path.join(SKILL_DIR, "SKILL.md"))[0] or ""
+        print("\n=== SKILL.md, Convenciones de las notas\n\n" + texto.split("## Convenciones de las notas", 1)[-1].strip())
+    for rel in dict.fromkeys(x for n in nombres for x in GUIAS.get(n, ())):
+        print("\n=== %s\n\n%s" % (rel, (leer_texto(os.path.join(SKILL_DIR, rel))[0] or "").strip()))
 
 
 # ------------------------------------------------------------ archivos sin ficha
@@ -2689,7 +3562,7 @@ def cmd_texto(args):
         print("No encuentro %s." % args.archivo)
         sys.exit(2)
     if ext not in (".docx", ".xlsx", ".pptx"):
-        print("BRAIN texto lee .docx, .xlsx y .pptx. Un .doc o .rtf: textutil -convert txt -stdout "
+        print("brainme texto lee .docx, .xlsx y .pptx. Un .doc o .rtf: textutil -convert txt -stdout "
               "\"<archivo>\". Keynote, Pages o Numbers: expórtalo a PDF o al formato de Office.")
         sys.exit(2)
     try:
@@ -2707,7 +3580,10 @@ def main():
     p = argparse.ArgumentParser(description="Estado y orden de un proyecto brainme, sin romper enlaces.")
     p.add_argument("--raiz", default=".", help="carpeta del proyecto (por defecto, la actual)")
     sub = p.add_subparsers(dest="cmd")
-    sub.add_parser("sincroniza")
+    co = sub.add_parser("comprueba")
+    co.add_argument("--dejar", nargs="+", metavar="NOTA", help="el usuario cambió a propósito el origen o una actualización")
+    si = sub.add_parser("sincroniza")
+    si.set_defaults(dejar=None)  # el nombre de comprueba hasta la 3.2
     sub.add_parser("estado")
     ma = sub.add_parser("mapa")
     ma.add_argument("--nota", help="con qué notas se conecta, con su resumen")
@@ -2743,34 +3619,59 @@ def main():
     mi.add_argument("--aplicar", action="store_true")
     mi.add_argument("--deshacer", action="store_true")
     ve = sub.add_parser("versiones")
-    ve.add_argument("--plan", help="ruta del plan para BRAIN mover")
+    ve.add_argument("--plan", help="ruta del plan para brainme mover")
     ve.add_argument("--archivar", action="append", metavar="CARPETA",
                     help="carpeta propia de un entregable cuyo contenido pasa a versiones/ (repetible)")
     ja = sub.add_parser("jardin")
-    ja.add_argument("--hecho", action="store_true", help="anota que el jardín se revisó hoy")
+    ja.add_argument("--hecho", nargs="*", metavar="NOTA",
+                    help="anota las notas revisadas; sin notas, cierra el jardín si no queda ninguna por revisar")
+    ja.add_argument("--dejar", nargs="+", metavar="NOTA",
+                    help="una nota suelta o archivada, o un par parecido, que el usuario decide dejar así")
+    ja.add_argument("--tanda", action="store_true", help="con --hecho: las notas de la última tanda que mostró jardin")
+    ja.add_argument("--sin-revisar", action="store_true",
+                    help="con --hecho: cierra sin revisar las que faltan (solo si el usuario decide saltarlas)")
     ar = sub.add_parser("archivar")
     ar.add_argument("nota", nargs="?")
     ar.add_argument("--por", help="la nota que la reemplaza o donde quedó su contenido")
     ar.add_argument("--repuntar", action="store_true", help="los enlaces a la nota pasan a la de --por")
     ar.add_argument("--deshacer", action="store_true", help="revierte el último archivado")
+    po = sub.add_parser("procesado")
+    po.add_argument("archivos", nargs="+")
+    po.add_argument("--a", help="carpeta de 01 a 05; sin ella, va a .brainme/inbox-procesado/<hoy>/")
+    le = sub.add_parser("leer")
+    le.add_argument("notas", nargs="*")
+    le.add_argument("--originales", action="store_true", help="también el texto de sus originales")
+    le.add_argument("--tanda", action="store_true", help="las notas de la última tanda del jardín, con sus originales")
+    ll = sub.add_parser("llevar")
+    ll.add_argument("borrador", help="archivo con el texto, sin frontmatter")
+    ll.add_argument("--de", required=True, help="la nota de la que sale")
+    ll.add_argument("--tema", required=True)
+    ll.add_argument("--permitir", nargs="+", metavar="PALABRA", help="lo que el usuario dijo que puede quedarse")
+    ll.add_argument("--ok", action="store_true", help="el usuario ya aprobó el texto: lo lleva")
+    sub.add_parser("inbox")
+    gu = sub.add_parser("guia")
+    gu.add_argument("nombres", nargs="+", metavar="GUIA", help="convenciones, " + ", ".join(sorted(GUIAS)))
+    bu = sub.add_parser("buscar")
+    bu.add_argument("palabras", nargs="+")
     tx = sub.add_parser("texto")
     tx.add_argument("archivo")
     tx.add_argument("--filas", type=int, default=FILAS_HOJA,
                     help="máximo de filas por hoja de Excel (0: todas; por defecto %d)" % FILAS_HOJA)
-    sub.add_parser("espacio")
+    sub.add_parser("multiproyecto")
+    sub.add_parser("espacio")  # el nombre de multiproyecto hasta la 3.2
     cr = sub.add_parser("crear")
-    cr.add_argument("carpeta", nargs="?", help="por defecto, la actual; en un espacio, desde su raíz")
-    cr.add_argument("--prefijo", help="prefijo de las notas (proyectos de un espacio)")
+    cr.add_argument("carpeta", nargs="?", help="por defecto, la actual; en una carpeta multiproyecto, desde su raíz")
+    cr.add_argument("--prefijo", help="prefijo de las notas (proyectos de una carpeta multiproyecto)")
     cr.add_argument("--trata", help="de qué trata, en una o dos frases")
     sub.add_parser("version")
     args = p.parse_args()
-    comandos = {"sincroniza": cmd_sincroniza, "estado": cmd_estado, "mapa": cmd_mapa, "nombres": cmd_nombres, "inventario": cmd_inventario, "respaldo": cmd_respaldo, "mover": cmd_mover,
+    comandos = {"comprueba": cmd_comprueba, "sincroniza": cmd_comprueba, "estado": cmd_estado, "mapa": cmd_mapa, "nombres": cmd_nombres, "inventario": cmd_inventario, "respaldo": cmd_respaldo, "mover": cmd_mover,
                 "verificar": cmd_verificar, "deshacer": cmd_deshacer,
                 "a-wikilinks": cmd_a_wikilinks, "sin-resumen": cmd_sin_resumen,
                 "poner-resumenes": cmd_poner_resumenes, "autor": cmd_autor,
                 "bitacora": cmd_bitacora, "consumo": cmd_consumo, "migrar": cmd_migrar,
-                "versiones": cmd_versiones, "espacio": cmd_espacio, "crear": cmd_crear,
-                "jardin": cmd_jardin, "archivar": cmd_archivar, "texto": cmd_texto,
+                "versiones": cmd_versiones, "multiproyecto": cmd_multiproyecto, "espacio": cmd_multiproyecto, "crear": cmd_crear,
+                "jardin": cmd_jardin, "archivar": cmd_archivar, "buscar": cmd_buscar, "procesado": cmd_procesado, "inbox": cmd_inbox, "guia": cmd_guia, "leer": cmd_leer, "llevar": cmd_llevar, "texto": cmd_texto,
                 "version": lambda a: print(VERSION)}
     if args.cmd not in comandos:
         p.print_help()

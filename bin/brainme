@@ -1,0 +1,8 @@
+#!/bin/sh
+# El comando brainme: corre el script del plugin. Claude Code agrega bin/ al PATH de sus comandos.
+origen="$0"
+while [ -L "$origen" ]; do
+  enlace=$(readlink "$origen")
+  case "$enlace" in /*) origen="$enlace" ;; *) origen="$(dirname "$origen")/$enlace" ;; esac
+done
+exec python3 "$(cd "$(dirname "$origen")/.." && pwd)/scripts/brainme.py" "$@"

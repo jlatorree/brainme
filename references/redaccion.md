@@ -1,7 +1,7 @@
 # Cómo escribe brainme
 
 Vale para todo lo que escribes: notas, fichas, entregables, la bitácora y los mensajes al
-usuario. Si el espacio o el proyecto tiene su propia guía de redacción, manda esa.
+usuario.
 
 La regla de fondo es que cada frase aporte algo concreto: un dato, un hallazgo, una
 decisión, el paso que sigue. Lo de abajo son las formas más comunes de romperla.
@@ -30,5 +30,4 @@ decisión, el paso que sigue. Lo de abajo son las formas más comunes de romperl
 - Las pausas van con coma, punto o paréntesis, sin raya (—).
 - Varía el largo de frases y párrafos: si todos miden lo mismo, suena a plantilla.
 
-**Antes de mostrar un texto o guardar una nota**, búscale cada patrón de esta lista y
-corrígelo.
+**Para revisar un texto**, búscale cada patrón de esta lista y corrígelo.

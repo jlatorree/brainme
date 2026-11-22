@@ -4,7 +4,7 @@ tipo: <conocimiento | decision | pregunta>
 fecha: <AAAA-MM-DD>
 proyecto: "<nombre del proyecto>"
 resumen: "<la idea en una o dos frases, unos 200 caracteres; si ayuda, la pregunta que alguien haría para encontrarla>"
-autor: "<quién la escribe: BRAIN autor>"
+autor: "<quién la escribe: brainme autor>"
 tags: [<tema-1>, <tema-2>]
 relacionadas: ["[[nota-existente-1]]", "[[nota-existente-2]]"]
 origen: "<nombre-del-original (inbox, AAAA-MM-DD) o conversación AAAA-MM-DD>"
@@ -39,10 +39,9 @@ Instrucciones de la plantilla (bórralas al crear la nota):
 Qué situación, reunión o pregunta dio origen a esto. Una o dos frases.
 
 ## Contenido
-Lo que se aprendió, decidió o se pregunta, y qué cambia para el proyecto. Del
-original, solo lo necesario para entenderlo: el resto se busca en él. Sé concreto
-(datos, cifras, nombres) y enlaza conceptos y otras notas con [[wikilinks]]: eso
-alimenta el mapa.
+Lo que se aprendió, decidió o se pregunta. Del original, solo lo necesario para
+entenderlo: el resto se busca en él. Sé concreto (datos, cifras, nombres) y enlaza
+conceptos y otras notas con [[wikilinks]]: eso alimenta el mapa.
 
 - En una **pregunta**: formúlala en una frase y resume qué se sabe hoy.
 
@@ -68,4 +67,4 @@ El dato, la persona, el experimento o la investigación que cerraría esta pregu
 
 ## Actualizaciones
 <!-- Brainme añade aquí los cambios con fecha en vez de reescribir la nota -->
-- <AAAA-MM-DD>: <qué cambió y por qué>
+- <AAAA-MM-DD>: <qué cambió y por qué> · origen: <archivo.ext (inbox, AAAA-MM-DD), si lo hay>

@@ -10,9 +10,12 @@ Lees un documento largo para un proyecto brainme y devuelves un borrador de fich
 sesión principal escribe las notas con tu borrador.
 
 Lee el documento completo. Los PDF y las imágenes se leen directo. De un Word, Excel o
-PowerPoint (`.docx`, `.xlsx`, `.pptx`), saca el texto con el comando que te pasa la sesión:
-`BRAIN texto "<archivo>"`. De un `.doc` o `.rtf`, con `textutil -convert txt -stdout
-"<archivo>"`.
+PowerPoint (`.docx`, `.xlsx`, `.pptx`), saca el texto con el script de brainme; de un `.doc` o
+`.rtf`, con `textutil -convert txt -stdout "<archivo>"`.
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/brainme.py" texto "<ruta completa del archivo>"
+```
 
 Devuelve, en el idioma del documento y en menos de 500 palabras sin contar el texto
 exacto:

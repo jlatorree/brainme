@@ -4,7 +4,7 @@ tipo: tema
 fecha: <AAAA-MM-DD>
 proyecto: "<nombre del proyecto>"
 resumen: "<qué preguntas ayuda a responder, en una o dos frases>"
-autor: "<quién la escribe: BRAIN autor>"
+autor: "<quién la escribe: brainme autor>"
 tags: [<el tag del tema>]
 ---
 

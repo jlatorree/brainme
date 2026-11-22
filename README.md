@@ -24,7 +24,7 @@ Cada proyecto tiene seis partes:
 Cada idea queda en su propia nota, enlazada a las que ya existen. Para responder,
 Claude sigue esos enlaces en vez de releer documentos completos.
 
-1. **Enlazar es construir:** cada nota se conecta; Claude responde consultando el mapa.
+1. **Enlazar es construir:** cada nota se conecta; Claude responde buscando en ellas y siguiendo sus enlaces.
 2. **Tú no programas:** brainme corre todo y te explica qué hizo.
 3. **Toda afirmación con su fuente:** doble cita, el link real y la ficha en el mapa.
 4. **Nada se pierde:** se mueve, no se borra; todo orden tiene respaldo y se deshace.
@@ -40,6 +40,7 @@ Abre Claude Code en la carpeta del proyecto, escribe **brainme** y habla normal:
 
 | Dices | brainme |
 | --- | --- |
+| "qué sabemos de...", "qué decidimos sobre..." | responde con las notas, enlaza de dónde sale cada cosa y dice qué es supuesto |
 | "ponme al día" | resume estado, decisiones, preguntas abiertas e inbox |
 | "procesa el inbox" | convierte apuntes y reuniones en notas conectadas |
 | "guarda esto" | guarda lo que surgió como nota conectada |
@@ -47,10 +48,10 @@ Abre Claude Code en la carpeta del proyecto, escribe **brainme** y habla normal:
 | "haz un informe de..." | lo arma o lo ubica en exports, con su ficha |
 | "ordena esta carpeta" | reparte archivos sueltos sin romper enlaces |
 | "añadí notas nuevas" | pone el mapa al día |
-| "revisa el jardín" | verifica las notas contra sus originales, fusiona duplicados, archiva lo viejo, pone al día el tablero y enlaza las sueltas |
+| "revisa el jardín" | verifica las notas por tandas contra sus originales, fusiona duplicados, archiva lo viejo, pone al día el tablero y enlaza las sueltas |
 | "ayúdame con un handoff" o `/brainme:handoff` | guarda lo pendiente y sigue en una sesión nueva |
-| "configura un espacio" | arma una carpeta para varios proyectos con un contexto general |
-| "nuevo proyecto: ..." · "cierra el proyecto" | abre un proyecto del espacio, o lo cierra con su nota de cierre (se queda en su carpeta) |
+| "quiero llevar varios proyectos" | arma una carpeta multiproyecto, con un contexto general |
+| "nuevo proyecto: ..." · "cierra el proyecto" | abre un proyecto de la carpeta multiproyecto, o lo cierra con su nota de cierre (se queda en su carpeta) |
 | "cómo van los proyectos" | panorama de todos, sin abrir sus notas |
 | "lleva esto al contexto general" | lo pasa sin datos del proyecto, con tu OK |
 
@@ -60,14 +61,14 @@ pone al día el tablero (`tablero.md`), que cada sesión carga al empezar.
 Según la carpeta, brainme la configura (si está vacía), la ordena (si tiene avance
 previo, con un solo OK y reversible) o te pone al día (si ya usa brainme).
 
-## Varios proyectos: el modo espacio
+## Varios proyectos: el modo multiproyecto
 
 Si trabajas varios proyectos que comparten reglas y conocimiento (una consultora con sus
-clientes, una tesis con sus estudios), brainme arma un espacio:
+clientes, una tesis con sus estudios), brainme arma una carpeta multiproyecto:
 
 ```
-mi-espacio/
-  CLAUDE.md                     reglas del espacio: se cargan en cada sesión de adentro
+mis-proyectos/
+  CLAUDE.md                     reglas comunes: se cargan en cada sesión de adentro
   general/                      contexto general: lo que sirve a todos los proyectos
   proyectos/2026/acme-precios/  un brainme por proyecto, con su ficha y un prefijo en sus notas
 ```
@@ -79,8 +80,8 @@ carpeta: lo aprendido sigue a mano.
 - Lo que sirve a otros pasa al contexto general sin datos del proyecto y con tu OK.
 - Al configurar eliges los campos de la ficha, la revisión antes de entregar (un archivo
   o un skill tuyo), la nota al cerrar y de dónde llegan las reuniones.
-- Si ya armaste uno a mano, brainme lo detecta y te ofrece convertirlo, sin tocar lo
-  propio de tu espacio.
+- Si ya armaste una a mano, brainme la detecta y te ofrece convertirla, sin tocar lo
+  propio de tu carpeta.
 
 ## De la misma familia
 
@@ -91,8 +92,8 @@ discoverme quedan en las carpetas de tu proyecto brainme.
 ## Requisitos
 
 - Mac con Claude Code.
-- [Homebrew](https://brew.sh): instálalo tú antes, porque pide tu contraseña. Trae de
-  paso Python 3, que brainme también usa. [Guía paso a paso](https://claude.ai/artifact/D9QNftYYdY1QW4huHFPPGi).
+- Python 3, que viene con las herramientas de línea de comandos de Apple. Si faltan,
+  brainme abre el instalador de macOS y tú aceptas. No hay que instalar nada más.
 
 Opcionales: [Obsidian](https://obsidian.md), para ver y editar las notas, y Keynote,
 para exportar presentaciones a PDF.
@@ -149,9 +150,9 @@ que nunca queda desactualizado.
 | Archivo | Rol |
 | --- | --- |
 | `SKILL.md` | El skill: vocabulario, estructura y flujos. |
-| `references/` | Configurar, espacio, redacción, ordenar, entregables, jardín, handoff y migrar. |
-| `templates/` | Nota, página de tema, tablero, ficha de paper, web y entregable, y `CLAUDE.md` de proyecto y de espacio. |
-| `scripts/brainme.py` | Estado, tablero, mapa de enlaces, índice, jardín y archivo de notas, texto de Office, orden sin romper enlaces, bitácora, espacio y proyectos, migración y consumo. Python 3, sin dependencias. |
+| `references/` | Configurar, inbox, multiproyecto, redacción, ordenar, entregables, jardín, handoff y migrar. |
+| `templates/` | Nota, página de tema, tablero, ficha de paper, web y entregable, y `CLAUDE.md` de proyecto y de carpeta multiproyecto. |
+| `scripts/brainme.py` | Estado, tablero, mapa de enlaces, búsqueda, índice, jardín y archivo de notas, texto de Office, orden sin romper enlaces, bitácora, multiproyecto, migración y consumo. Python 3, sin dependencias. |
 | `agents/` | Ayudantes con modelo fijo: resúmenes (Haiku) y documentos largos (Sonnet). |
 | `commands/handoff.md` | El comando `/brainme:handoff`. |
 | `tests/` | Pruebas del script, sin gastar tokens: `python3 -m unittest discover tests`. |
