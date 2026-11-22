@@ -6,8 +6,7 @@ autores: "<Apellido, N.; Apellido, N.>"
 anio: <AAAA>
 venue: "<revista o conferencia>"
 doi: "<10.xxxx/xxxxx o sin DOI>"
-# source_url: Graphify copia este campo a cada concepto que extrae de la nota,
-# así cada respuesta del grafo lleva su link de origen.
+# source_url: el enlace canónico, el mismo que va en la doble cita.
 source_url: "<https://doi.org/10.xxxx/xxxxx o enlace canónico>"
 pdf: "<apellido-anio-palabra-clave.pdf si está guardado junto a la ficha, o no>"
 peer_reviewed: <sí | no | preprint>

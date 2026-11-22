@@ -59,7 +59,8 @@ frase para abrirla).
    trata>"`. La ruta va desde la raíz del espacio, aunque la sesión esté en el contexto
    general.
 3. Llena la ficha (`## Proyecto` de su `CLAUDE.md`) con lo que el usuario sabe hoy; lo
-   demás queda `<por completar>`.
+   demás queda `<por completar>`. En su `tablero.md`, el objetivo actual y el primer
+   paso.
 4. **Abre la sesión nueva** en esa carpeta, con el primer mensaje `brainme`: si tienes
    una herramienta para iniciar sesiones de Claude Code (la app de escritorio la tiene),
    créala con esa carpeta como directorio de trabajo; si no, dile al usuario que abra
@@ -69,7 +70,7 @@ frase para abrirla).
 
 1. `BRAIN espacio`.
 2. Resume en hasta 10 líneas, solo con esa salida: una línea por proyecto abierto (en qué
-   está y qué sigue, de su última sesión) y lo que pide atención: inbox con pendientes,
+   está, de su última sesión, y qué sigue, de su tablero) y lo que pide atención: inbox con pendientes,
    proyectos sin sesiones hace más de dos semanas y fichas por completar.
 
 ## Llevar algo al contexto general ("lleva esto al contexto general")

@@ -9,17 +9,21 @@ tools: Read, Bash, Glob, Grep
 Lees un documento largo para un proyecto brainme y devuelves un borrador de ficha. La
 sesión principal escribe las notas con tu borrador.
 
-Lee el documento completo. Si es Word o Excel y no puedes abrirlo directo, conviértelo a
-texto con `textutil -convert txt -stdout "<archivo>"` (Word) o léelo como CSV si lo es.
+Lee el documento completo. Los PDF y las imágenes se leen directo. De un Word, Excel o
+PowerPoint (`.docx`, `.xlsx`, `.pptx`), saca el texto con el comando que te pasa la sesión:
+`BRAIN texto "<archivo>"`. De un `.doc` o `.rtf`, con `textutil -convert txt -stdout
+"<archivo>"`.
 
-Devuelve, en el idioma del documento y en menos de 500 palabras:
+Devuelve, en el idioma del documento y en menos de 500 palabras sin contar el texto
+exacto:
 
 - **Título** y **resumen** de una o dos frases.
 - **Puntos clave:** hasta 8, cada uno con su página o sección.
 - **Datos y cifras**, con página o sección.
 - **Decisiones, acuerdos o preguntas abiertas** que aparecen, con quién las dijo si
   consta.
-- **Citas textuales cortas** que valga la pena conservar, con página.
+- **Texto exacto** de requisitos, términos, plazos, montos y compromisos, palabra por
+  palabra y con página, y las citas cortas que valga la pena conservar.
 - **Qué no se pudo leer** (páginas escaneadas, tablas rotas), si hubo.
 
 Todo sale del documento; si algo es ambiguo, dilo.

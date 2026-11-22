@@ -2,7 +2,7 @@
 """Herramienta de brainme: estado del proyecto y orden sin romper enlaces.
 
 Subcomandos (se corren desde la raíz del proyecto):
-  sincroniza   resumen del mapa y, si el proyecto usa Graphify, graphify update .
+  sincroniza   línea del mapa tras escribir: notas, islas y enlaces rotos
   estado       resumen compacto para ponerse al día (inbox, preguntas, decisiones, mapa)
   mapa         mapa de enlaces entre notas: lo más conectado, islas, enlaces rotos,
                los vecinos de una nota (--nota) o el camino entre dos (--camino)
@@ -21,7 +21,10 @@ Subcomandos (se corren desde la raíz del proyecto):
   migrar       revisa y aplica lo que le falta a un proyecto de una versión anterior
   versiones    plan para dar a cada entregable su carpeta, con las versiones anteriores en versiones/
   espacio      panorama de un espacio: contexto general y proyectos, sin abrir notas
-  crear        carpetas y CLAUDE.md de un proyecto (suelto, contexto general o de un espacio)
+  crear        carpetas, tablero y CLAUDE.md de un proyecto (suelto, contexto general o de un espacio)
+  jardin       lista de trabajo del jardín (sueño): tablero, supuestos, lo editado, duplicados, mapa
+  archivar     pasa una nota obsoleta o fusionada a archive/, sin romper enlaces (o los reapunta)
+  texto        texto de un Word, Excel o PowerPoint (.docx, .xlsx, .pptx), para leerlo
 
 Solo usa la biblioteca estándar de Python (3.9 o superior).
 """
@@ -32,15 +35,15 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import sys
 import unicodedata
 import zipfile
+import xml.etree.ElementTree as ET
 from urllib.parse import unquote
 
-VERSION = "3.1.0"
+VERSION = "3.2.0"
 # Última versión que cambió algo dentro de los proyectos: los anteriores piden migrar
-VERSION_PROYECTO = "3.1.0"
+VERSION_PROYECTO = "3.2.0"
 
 # Las carpetas de 05_exports (reports/, presentations/...) aparecen con su primer entregable
 ESTRUCTURA = [
@@ -49,12 +52,13 @@ ESTRUCTURA = [
 ]
 RAICES_ESTRUCTURA = {"00_inbox", "01_knowledge", "02_decisions", "03_open_questions",
                      "04_sources", "05_exports"}
-# Carpetas que nunca se recorren ni se mueven
+# Carpetas que nunca se recorren ni se mueven. graphify-out/ y .graphifyignore son de
+# proyectos que usaron Graphify con versiones anteriores: se dejan como están.
 PROTEGIDAS = {".git", ".obsidian", ".trash", ".claude", ".brainme", "graphify-out",
               "node_modules", ".claude-plugin"}
 # Se quedan donde están (no son "por ordenar")
 SE_QUEDAN_RAIZ = {"claude.md", "readme.md", "agents.md", ".graphifyignore", ".gitignore",
-                  "bitacora.md"}
+                  "bitacora.md", "tablero.md"}
 CARPETAS_QUE_SE_QUEDAN = {"docs", "_taller"}
 # Versiones viejas de entregables y generadores: fuera del índice, las búsquedas y el grafo.
 # Las versiones viven en 05_exports/<tipo>/<entregable>/versiones/ (_versiones/ es de 3.0)
@@ -874,89 +878,13 @@ def leer_fm(texto):
     return campos
 
 
-def python_de_graphify(raiz):
-    marca = os.path.join(raiz, "graphify-out", ".graphify_python")
-    if os.path.exists(marca):
-        with open(marca, encoding="utf-8") as f:
-            return f.read().strip()
-    exe = shutil.which("graphify")
-    if not exe:
-        return None
-    with open(exe, encoding="utf-8", errors="ignore") as f:
-        primera = f.readline().strip()
-    return primera[2:] if primera.startswith("#!") else None
-
-
-def correr(cmd, raiz):
-    try:
-        r = subprocess.run(cmd, cwd=raiz, capture_output=True, text=True, timeout=90)
-        return r.stdout if r.returncode == 0 else None
-    except (OSError, subprocess.SubprocessError):
-        return None
-
-
-RE_FECHA = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-
-
-def limpiar_respaldos_grafo(raiz):
-    """Graphify guarda en graphify-out/AAAA-MM-DD/ una copia del grafo antes de
-    sobrescribirlo, una carpeta por día. Deja solo la más reciente."""
-    out = os.path.join(raiz, "graphify-out")
-    if not os.path.isdir(out):
-        return []
-    fechas = sorted(n for n in os.listdir(out)
-                    if RE_FECHA.match(n) and os.path.isdir(os.path.join(out, n)))
-    borradas = []
-    for n in fechas[:-1]:
-        try:
-            shutil.rmtree(os.path.join(out, n))
-            borradas.append(n)
-        except OSError as e:
-            print("No pude borrar el respaldo %s: %s" % (n, e))
-    return borradas
-
-
-def usa_graphify(raiz):
-    """El proyecto eligió Graphify para la lectura profunda (configurar o versiones anteriores)."""
-    return any(os.path.exists(os.path.join(raiz, n)) for n in ("graphify-out", ".graphifyignore"))
-
-
 def cmd_sincroniza(args):
     raiz = os.path.abspath(args.raiz)
-    if usa_graphify(raiz):
-        sincroniza_graphify(raiz)
     print(linea_mapa(mapa_de_enlaces(raiz, listar_archivos(raiz))))
 
 
-def sincroniza_graphify(raiz):
-    exe = shutil.which("graphify")
-    if not exe:
-        print("Graphify no está instalado en este computador: el mapa de brainme funciona igual "
-              "y la lectura profunda queda para un computador que lo tenga.")
-        return
-    r = subprocess.run([exe, "update", "."], cwd=raiz, capture_output=True, text=True)
-    if r.returncode != 0:
-        print("graphify update falló (ver references/problemas.md):")
-        print("\n".join((r.stdout + r.stderr).strip().splitlines()[-8:]))
-        sys.exit(r.returncode)
-    print("Graphify al día.")
-    borradas = limpiar_respaldos_grafo(raiz)
-    if borradas:
-        print("Respaldos viejos del grafo borrados: %s (queda el último)." % ", ".join(borradas))
-    # Copias en conflicto de iCloud ("graph 2.json"): Graphify regenera el original
-    out = os.path.join(raiz, "graphify-out")
-    copias = [n for n in os.listdir(out) if RE_COPIA_CONFLICTO.match(n)] if os.path.isdir(out) else []
-    for n in copias:
-        try:
-            os.remove(os.path.join(out, n))
-        except OSError:
-            pass
-    if copias:
-        print("Copias en conflicto del grafo borradas: %s." % ", ".join(copias))
-
-
 NOMBRES_CAT = {"pdf": "PDFs", "imagen": "imágenes", "office": "archivos de Office",
-               "web": "páginas HTML", "video_audio": "videos o audios", "otro": "otros archivos"}
+               "presentacion": "presentaciones", "web": "páginas HTML", "video_audio": "videos o audios", "otro": "otros archivos"}
 
 
 def cmd_estado(args):
@@ -974,8 +902,9 @@ def cmd_estado(args):
                                  "configurado con brainme" if configurado else "SIN CONFIGURAR"))
     rels = listar_archivos(raiz)
     estado_espacio(raiz, rels, texto_claude, configurado)
+    estado_tablero(raiz)
 
-    inbox = [r for r in rels if r.startswith("00_inbox/") and not r.startswith("00_inbox/archive/")]
+    inbox =[r for r in rels if r.startswith("00_inbox/") and not r.startswith("00_inbox/archive/")]
     print("Inbox sin procesar: %d%s" % (len(inbox), (" -> " + ", ".join(
         r.split("/", 1)[1] for r in inbox[:8]) + (" ..." if len(inbox) > 8 else "")) if inbox else ""))
 
@@ -1017,32 +946,13 @@ def cmd_estado(args):
                and not r.startswith("00_inbox/") and os.path.getmtime(os.path.join(raiz, r)) > hace7]
     print("Notas creadas o editadas en los últimos 7 días: %d" % len(movidas))
     estado_21(raiz, rels, texto_claude, configurado)
+    estado_32(raiz, rels)
 
     datos = mapa_de_enlaces(raiz, rels)
     print(linea_mapa(datos))
     if datos[0]:
         print("Lo más conectado: " + ", ".join(
             "[[%s]] (%d)" % (nombre_nota(r), n) for r, n in mas_conectadas(datos, 5)))
-    if not os.path.exists(os.path.join(raiz, "graphify-out", "graph.json")):
-        return
-    py = python_de_graphify(raiz)
-    if py:
-        codigo = ("import json; from pathlib import Path; from graphify.detect import detect_incremental; "
-                  "r=detect_incremental(Path('.')); "
-                  "print(json.dumps([f for v in r.get('new_files',{}).values() for f in v]))")
-        salida = correr([py, "-c", codigo], raiz)
-        try:
-            pend = json.loads(salida.strip().splitlines()[-1]) if salida else None
-        except (ValueError, IndexError):
-            pend = None
-        if pend is not None:
-            otros = {}
-            for f in pend:
-                if os.path.splitext(f)[1].lower() not in (".md", ".txt"):
-                    otros[categoria(f)] = otros.get(categoria(f), 0) + 1
-            if otros:
-                print("Lectura profunda (Graphify): recomendada para " + ", ".join(
-                    "%d %s" % (v, NOMBRES_CAT.get(k, k)) for k, v in otros.items()))
 
 
 def cmd_nombres(args):
@@ -1062,8 +972,8 @@ def cmd_nombres(args):
 
 def cmd_a_wikilinks(args):
     """Convierte links markdown internos entre notas ([t](nota.md)) en wikilinks.
-    En Obsidian funcionan igual; Graphify solo lee bien los wikilinks cuando el nombre
-    del archivo tiene espacios. Las imágenes y los links externos no se tocan."""
+    Los wikilinks van por nombre, así que mover una nota no los rompe. Las imágenes y los
+    links externos no se tocan."""
     raiz = os.path.abspath(args.raiz)
     layout = Layout(raiz, buscar_vault(raiz), listar_archivos(raiz))
     total, archivos = 0, 0
@@ -1136,7 +1046,7 @@ def nombre_nota(rel):
 
 
 def mapa_de_enlaces(raiz, rels):
-    """Wikilinks entre las notas de la estructura, leídos sin Graphify.
+    """Enlaces (wikilinks y links internos) entre las notas de la estructura.
     Devuelve (notas, sale, entra, rotos): sale y entra van de cada nota a las notas que
     enlaza o que la enlazan; rotos son (origen, texto) de wikilinks a notas que no existen."""
     notas = notas_resumibles(rels)
@@ -1168,7 +1078,7 @@ CARPETAS_ATOMICAS = ("01_knowledge", "02_decisions", "03_open_questions", "04_so
 def sueltas(datos):
     """Notas atómicas sin ningún enlace (islas) y las que no enlazan a ninguna otra."""
     notas, sale, entra, _ = datos
-    atomicas = [r for r in notas if r.split("/")[0] in CARPETAS_ATOMICAS]
+    atomicas = [r for r in notas if r.split("/")[0] in CARPETAS_ATOMICAS and "/archive/" not in r]
     islas = [r for r in atomicas if not sale[r] and not entra[r]]
     sin_salida = [r for r in atomicas if not sale[r] and entra[r]]
     return islas, sin_salida
@@ -1202,9 +1112,18 @@ def resumen_de(raiz, rel, largo=140):
     return r if len(r) <= largo else r[:largo - 1] + "…"
 
 
+def es_supuesto(fm):
+    return (fm.get("certeza") or "").lower().startswith("supuest")
+
+
 def con_resumen(raiz, rel):
     r = resumen_de(raiz, rel)
-    return "[[%s]]%s" % (nombre_nota(rel), " · " + r if r else "")
+    fm = leer_fm(leer_texto(os.path.join(raiz, rel))[0] or "")
+    marca = " (supuesto)" if es_supuesto(fm) else ""
+    if fm.get("archivada"):
+        por = fm.get("reemplazada_por")
+        marca += " (archivada%s)" % (", reemplazada por " + por if por else "")
+    return "[[%s]]%s%s" % (nombre_nota(rel), marca, " · " + r if r else "")
 
 
 def buscar_nota(notas, nombre):
@@ -1261,6 +1180,12 @@ def cmd_mapa(args):
         return
     print("Lo más conectado: " + ", ".join(
         "[[%s]] (%d)" % (nombre_nota(r), n) for r, n in mas_conectadas(datos, 10)))
+    detalle_mapa(datos)
+
+
+def detalle_mapa(datos):
+    """Islas, notas sin enlaces de salida y enlaces rotos, con nombres."""
+    rotos = datos[3]
     islas, sin_salida = sueltas(datos)
     if islas:
         print("Islas, sin ningún enlace (%d): %s" % (len(islas), lista_notas(islas, 30)))
@@ -1696,6 +1621,60 @@ def ficha_del_espacio(texto_espacio):
     return campos
 
 
+# --------------------------------------------------------------- tablero
+
+TABLERO = "tablero.md"
+LINEAS_TABLERO = 40
+LINEA_TABLERO = "Lo vigente del proyecto está en su tablero: @tablero.md"
+RE_IMPORTA_TABLERO = re.compile(r"@tablero\.md\b")
+RE_PLACEHOLDER = re.compile(r"<[^<>\n]+>")
+
+
+def crear_tablero(destino):
+    """Crea tablero.md desde la plantilla si falta. True si lo creó."""
+    ruta = os.path.join(destino, TABLERO)
+    if os.path.exists(ruta):
+        return False
+    texto = leer_texto(os.path.join(PLANTILLAS, TABLERO))[0]
+    escribir_texto(ruta, texto.replace("<AAAA-MM-DD>", datetime.date.today().isoformat(), 1), False)
+    return True
+
+
+def importar_tablero(texto):
+    """CLAUDE.md con la línea que carga el tablero en cada sesión, al final de ## brainme."""
+    s = seccion(texto, "brainme")
+    if RE_IMPORTA_TABLERO.search(texto or "") or not s:
+        return texto
+    despues = texto[s[1]:]
+    return texto[:s[1]].rstrip("\n") + "\n\n" + LINEA_TABLERO + "\n" + ("\n" + despues if despues else "")
+
+
+def seccion_tablero(texto, titulo):
+    """Viñetas de una sección del tablero, sin las que siguen siendo placeholder."""
+    m = re.search(r"^## %s[ \t]*\n(.*?)(?=^## |\Z)" % re.escape(titulo), texto or "", re.M | re.S)
+    vinetas = []
+    for linea in (m.group(1).split("\n") if m else []):
+        linea = re.sub(r"^\s*[-*]\s+(\[[ xX]\]\s+)?", "", linea, count=1) if re.match(r"^\s*[-*]\s", linea) else ""
+        if linea.strip() and not RE_PLACEHOLDER.search(linea):
+            vinetas.append(linea.strip())
+    return vinetas
+
+
+def estado_tablero(raiz):
+    """Línea del tablero en BRAIN estado: tamaño, fecha y qué le falta."""
+    texto = leer_texto(os.path.join(raiz, TABLERO))[0]
+    if texto is None:
+        return
+    lineas = len(texto.rstrip("\n").split("\n"))
+    print("Tablero: %d líneas · actualizado %s" % (lineas, leer_fm(texto).get("actualizado") or "sin fecha"))
+    cuerpo = texto.split("\n---", 1)[-1] if texto.startswith("---\n") else texto
+    if RE_PLACEHOLDER.search(cuerpo):
+        print("Tablero por llenar: quedan campos de la plantilla <...>")
+    if lineas > LINEAS_TABLERO:
+        print("Tablero largo: %d líneas (máximo %d): baja el detalle a notas y deja el enlace"
+              % (lineas, LINEAS_TABLERO))
+
+
 def cmd_crear(args):
     """Estructura y CLAUDE.md de un proyecto: suelto, contexto general o proyecto de un espacio.
     Dentro de un espacio, la carpeta se indica desde la raíz del espacio."""
@@ -1745,8 +1724,9 @@ def cmd_crear(args):
     if actual is not None:
         texto = actual.rstrip("\n") + "\n\n" + texto[texto.index("## brainme"):]
     escribir_texto(ruta, texto, crlf)
+    crear_tablero(destino)
     rel = os.path.relpath(destino, base) if base else nombre
-    print("Creé %s: carpetas y CLAUDE.md%s." % (rel, " con su ficha y el prefijo " + prefijo if ficha else ""))
+    print("Creé %s: carpetas, tablero.md y CLAUDE.md%s." % (rel, " con su ficha y el prefijo " + prefijo if ficha else ""))
     pendientes = [c for c in ficha if c not in ("Estado", "Prefijo de notas")]
     if pendientes:
         print("Ficha por completar: " + ", ".join(pendientes))
@@ -1773,10 +1753,12 @@ def resumen_de_proyecto(ruta):
     return texto, " · ".join(cifras), ultima
 
 
-def linea_ultima(ultima):
+def linea_ultima(ultima, ruta=None):
+    pasos = seccion_tablero(leer_texto(os.path.join(ruta, TABLERO))[0], "Próximos pasos") if ruta else []
+    sigue = "\n  sigue (tablero): %s" % pasos[0][:160] if pasos else ""
     if not ultima:
-        return "sin bitácora todavía"
-    return "última sesión: %s · %s" % (ultima["fecha"], ultima["linea"][:160])
+        return "sin bitácora todavía" + sigue
+    return "última sesión: %s · %s" % (ultima["fecha"], ultima["linea"][:160]) + sigue
 
 
 def cmd_espacio(args):
@@ -1795,7 +1777,7 @@ def cmd_espacio(args):
     print("Espacio: %s · contexto general: %s/" % (campo(texto, "Espacio") or os.path.basename(base), general))
     if es_proyecto(leer_texto(os.path.join(base, general, "CLAUDE.md"))[0]):
         _, cifras, ultima = resumen_de_proyecto(os.path.join(base, general))
-        print("Contexto general: %s\n  %s" % (cifras, linea_ultima(ultima)))
+        print("Contexto general: %s\n  %s" % (cifras, linea_ultima(ultima, os.path.join(base, general))))
     else:
         print("Contexto general: sin crear (BRAIN crear %s)" % general)
     carpeta = os.path.join(base, PROYECTOS)
@@ -1821,7 +1803,7 @@ def cmd_espacio(args):
                 continue
             filas.append(((ultima or {}).get("fecha", ""), rel, "- %s · %s · %s%s\n  %s\n  %s" % (
                 rel, prefijo_de(ficha) or "sin prefijo", campo(ficha, "De qué trata")[:140],
-                "" if estado == "activo" else " [%s]" % estado, cifras, linea_ultima(ultima))))
+                "" if estado == "activo" else " [%s]" % estado, cifras, linea_ultima(ultima, ruta))))
     filas.sort(key=lambda f: (f[0], f[1]), reverse=True)
     print("Proyectos abiertos (%d), el más reciente primero:" % len(filas) if filas else
           "Proyectos abiertos: ninguno (di «nuevo proyecto: <nombre>»).")
@@ -1853,9 +1835,6 @@ def estado_espacio(raiz, rels, texto_claude, configurado):
             print("Notas sin el prefijo %s: %d -> %s" % (prefijo, len(sin), lista_notas(sin, 6)))
 
 # --------------------------------------------------------------- migrar
-
-LINEAS_IGNORE = ["bitacora.md", "05_exports/**/versiones/", "_taller/"]
-
 
 def exports_vacias(raiz):
     """Carpetas de 05_exports sin ningún archivo: vuelven a aparecer con su primer entregable."""
@@ -1924,11 +1903,9 @@ def revisar_migracion(raiz):
         pass
     if not os.path.exists(os.path.join(raiz, BITACORA)):
         cambios.append(("bitacora", "Crear %s" % BITACORA))
-    ignore = leer_texto(os.path.join(raiz, ".graphifyignore"))[0]
-    if ignore is not None:
-        faltan = [l for l in LINEAS_IGNORE if l not in ignore.split("\n")]
-        if faltan:
-            cambios.append(("graphifyignore", "Agregar a .graphifyignore: " + ", ".join(faltan)))
+    if not os.path.exists(os.path.join(raiz, TABLERO)) or not RE_IMPORTA_TABLERO.search(claude_md):
+        cambios.append(("tablero", "Crear %s (objetivo, plan, próximos pasos y reglas aprendidas) y "
+                        "cargarlo en cada sesión desde CLAUDE.md" % TABLERO))
     vacias = exports_vacias(raiz)
     if vacias:
         cambios.append(("exports_vacias", "Quitar de 05_exports las carpetas vacías (%s): aparecen con su "
@@ -1968,13 +1945,10 @@ def aplicar_cambio(raiz, clave_cambio):
             f.write("\n")
     elif clave_cambio == "bitacora":
         escribir_texto(os.path.join(raiz, BITACORA), CABECERA_BITACORA, False)
-    elif clave_cambio == "graphifyignore":
-        ruta = os.path.join(raiz, ".graphifyignore")
-        texto, crlf = leer_texto(ruta)
-        faltan = [l for l in LINEAS_IGNORE if l not in texto.split("\n")]
-        texto = texto.rstrip("\n") + "\n\n# brainme: bitácora, versiones viejas y generadores\n" + \
-            "\n".join(faltan) + "\n"
-        escribir_texto(ruta, texto, crlf)
+    elif clave_cambio == "tablero":
+        crear_tablero(raiz)
+        texto, crlf = leer_texto(ruta_claude)
+        escribir_texto(ruta_claude, importar_tablero(texto), crlf)
     elif clave_cambio == "exports_vacias":
         for rel in exports_vacias(raiz):
             shutil.rmtree(os.path.join(raiz, rel))
@@ -2100,10 +2074,11 @@ def cmd_migrar(args):
             shutil.copy2(os.path.join(carpeta, "originales", rel), os.path.join(raiz, rel))
         for rel in reg["creados"]:
             ruta = os.path.join(raiz, rel)
-            if os.path.exists(ruta) and (leer_texto(ruta)[0] or "") == CABECERA_BITACORA:
+            creado = reg.get("textos", {}).get(rel, CABECERA_BITACORA)
+            if os.path.exists(ruta) and (leer_texto(ruta)[0] or "") == creado:
                 os.remove(ruta)
             elif os.path.exists(ruta):
-                print("Dejo %s porque ya tiene entradas." % rel)
+                print("Dejo %s porque ya tiene contenido nuevo." % rel)
         for rel in reg.get("carpetas_quitadas", []):
             os.makedirs(os.path.join(raiz, rel), exist_ok=True)
         shutil.rmtree(carpeta)
@@ -2134,7 +2109,7 @@ def cmd_migrar(args):
     carpeta = os.path.join(base, ahora())
     copias, creados = [], []
     quitadas = exports_vacias(raiz) if any(k == "exports_vacias" for k, _ in cambios) else []
-    for rel in ("CLAUDE.md", ".claude/settings.json", ".graphifyignore"):
+    for rel in ("CLAUDE.md", ".claude/settings.json"):
         if os.path.exists(os.path.join(raiz, rel)):
             os.makedirs(os.path.dirname(os.path.join(carpeta, "originales", rel)), exist_ok=True)
             shutil.copy2(os.path.join(raiz, rel), os.path.join(carpeta, "originales", rel))
@@ -2142,11 +2117,15 @@ def cmd_migrar(args):
     for k, desc in cambios:
         if k == "bitacora":
             creados.append(BITACORA)
+        if k == "tablero" and not os.path.exists(os.path.join(raiz, TABLERO)):
+            creados.append(TABLERO)
         aplicar_cambio(raiz, k)
         print("  ✓ " + desc)
+    textos = {rel: leer_texto(os.path.join(raiz, rel))[0] for rel in creados}
     with open(os.path.join(carpeta, "registro.json"), "w", encoding="utf-8") as f:
         json.dump({"version": VERSION, "cambios": [k for k, _ in cambios], "copias": copias,
-                   "creados": creados, "carpetas_quitadas": quitadas}, f, ensure_ascii=False, indent=1)
+                   "creados": creados, "textos": textos, "carpetas_quitadas": quitadas},
+                  f, ensure_ascii=False, indent=1)
     print("Migración aplicada. Para deshacerla: BRAIN migrar --deshacer")
 
 
@@ -2184,6 +2163,544 @@ def estado_21(raiz, rels, texto_claude, configurado):
             print("  %s %s · %s" % (e["fecha"], e["hora"], e["linea"][:160]))
     if not leer_config().get("autor"):
         print("Autor de este computador: no definido (BRAIN autor)")
+
+
+# --------------------------------------------------------------- jardín
+
+JARDIN = os.path.join(".brainme", "jardin.json")
+UMBRAL_JARDIN = 15
+MIN_NOTAS_TEMA = 6
+RE_FECHA = re.compile(r"\d{4}-\d{2}-\d{2}")
+RE_ORIGEN_INBOX = re.compile(r"^(.+?)\s*\(inbox,\s*(\d{4}-\d{2}-\d{2})\)")
+PALABRAS_VACIAS = {"de", "del", "la", "las", "el", "los", "en", "y", "o", "a", "al", "por", "para",
+                   "con", "sin", "un", "una", "que", "se", "su", "sus", "es", "no", "decision", "pregunta"}
+MAX_TEMA = 12  # más conexiones que esto: nota o tag general, no un tema
+TAGS_GENERICOS = {"literatura", "fuente", "entregable", "tema", "conocimiento", "decision", "pregunta"}
+
+
+def vigente(rel):
+    return "/archive/" not in rel
+
+
+def de_memoria(rel):
+    """Notas vigentes de 01 a 04: las que el jardín verifica (los entregables no)."""
+    return vigente(rel) and rel.split("/")[0] in CARPETAS_ATOMICAS
+
+
+def ultimo_jardin(raiz):
+    try:
+        with open(os.path.join(raiz, JARDIN), encoding="utf-8") as f:
+            return json.load(f).get("ultimo")
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def fecha_de_cambio(raiz, rel, texto):
+    """La fecha más reciente que declara la nota (frontmatter y ## Actualizaciones). La del
+    archivo cambia con cada sincronización de iCloud: queda para las notas sin fechas."""
+    fm = leer_fm(texto)
+    fechas = [m.group(0) for m in (RE_FECHA.search(fm.get(k) or "") for k in
+                                   ("fecha", "fecha_resolucion", "actualizado", "archivada")) if m]
+    s = re.search(r"^## Actualizaciones[ \t]*\n(.*?)(?=^## |\Z)", texto, re.M | re.S)
+    if s:
+        fechas += re.findall(r"^\s*[-*]\s*(\d{4}-\d{2}-\d{2})", s.group(1), re.M)
+    if fechas:
+        return max(fechas)
+    return datetime.date.fromtimestamp(os.path.getmtime(os.path.join(raiz, rel))).isoformat()
+
+
+def datos_de_notas(raiz, rels):
+    """{nota: (frontmatter, fecha de cambio)} de las notas de la estructura."""
+    info = {}
+    for r in notas_resumibles(rels):
+        texto = leer_texto(os.path.join(raiz, r))[0] or ""
+        info[r] = (leer_fm(texto), fecha_de_cambio(raiz, r, texto))
+    return info
+
+
+def original_de(raiz, fm):
+    """El original que el inbox archivó y del que salió la nota, si sigue ahí."""
+    m = RE_ORIGEN_INBOX.match(fm.get("origen") or "")
+    carpeta = os.path.join(raiz, ".brainme", "inbox-procesado", m.group(2)) if m else ""
+    if not m or not os.path.isdir(carpeta):
+        return None
+    nombre = clave(m.group(1).strip())
+    for a in sorted(os.listdir(carpeta)):
+        if clave(a) == nombre or clave(os.path.splitext(a)[0]) == nombre:
+            return ".brainme/inbox-procesado/%s/%s" % (m.group(2), a)
+    return None
+
+
+def palabras_de_nombre(nombre, prefijo):
+    if prefijo and clave(nombre).startswith(clave(prefijo)):
+        nombre = nombre[len(prefijo):]
+    return {p for p in re.split(r"[-_\s]+", clave(nombre)) if len(p) > 1 and p not in PALABRAS_VACIAS}
+
+
+def posibles_duplicados(rels, prefijo, n=10):
+    """Pares de notas de la misma carpeta con nombres casi iguales."""
+    por_carpeta = {}
+    for r in rels:
+        por_carpeta.setdefault(r.split("/")[0], []).append((r, palabras_de_nombre(nombre_nota(r), prefijo)))
+    pares = []
+    for lista in por_carpeta.values():
+        for i, (a, pa) in enumerate(lista):
+            for b, pb in lista[i + 1:]:
+                comunes = pa & pb
+                if len(comunes) >= 2 and len(comunes) >= 0.6 * len(pa | pb):
+                    pares.append((-len(comunes) / len(pa | pb), a, b))
+    return [(a, b) for _, a, b in sorted(pares)[:n]]
+
+
+def tags_de(fm):
+    valor = (fm.get("tags") or "").strip().strip("[]")
+    return [clave(t.strip().strip("\"'")) for t in valor.split(",") if t.strip()]
+
+
+def originales_desde(raiz, ultimo):
+    base = os.path.join(raiz, ".brainme", "inbox-procesado")
+    total = 0
+    for d in sorted(os.listdir(base)) if os.path.isdir(base) else []:
+        if RE_FECHA.fullmatch(d) and (not ultimo or d > ultimo) and os.path.isdir(os.path.join(base, d)):
+            total += len([a for a in os.listdir(os.path.join(base, d)) if not a.startswith(".")])
+    return total
+
+
+def cmd_jardin(args):
+    """Lista de trabajo del jardín, de lo que cambia más rápido a lo estable."""
+    raiz = os.path.abspath(args.raiz)
+    if args.hecho:
+        hoy = datetime.date.today().isoformat()
+        os.makedirs(os.path.join(raiz, ".brainme"), exist_ok=True)
+        with open(os.path.join(raiz, JARDIN), "w", encoding="utf-8") as f:
+            json.dump({"ultimo": hoy, "autor": leer_config().get("autor")}, f, ensure_ascii=False, indent=1)
+        print("Jardín revisado el %s. BRAIN estado avisa cuando vuelva a tocar." % hoy)
+        return
+    rels = listar_archivos(raiz)
+    prefijo = prefijo_de(leer_texto(os.path.join(raiz, "CLAUDE.md"))[0] or "")
+    info = datos_de_notas(raiz, rels)
+    vigentes = [r for r in info if de_memoria(r)]
+    ultimo = ultimo_jardin(raiz)
+    cambiadas = sorted((r for r in vigentes if not ultimo or info[r][1] > ultimo),
+                       key=lambda r: (info[r][1], r), reverse=True)
+    print("Jardín: %s: %s nuevas o editadas, %s del inbox." % (
+        "último el %s. Desde entonces" % ultimo if ultimo else "nunca revisado. En total",
+        cuantos(len(cambiadas), "nota", "notas"),
+        cuantos(originales_desde(raiz, ultimo), "original procesado", "originales procesados")))
+
+    datos = mapa_de_enlaces(raiz, rels)
+    excluir = TAGS_GENERICOS | ({clave(prefijo.rstrip("-"))} if prefijo else set())
+    # Mismo tema: solo entre notas de conocimiento, decisiones y preguntas. Una nota o un
+    # tag que conecta con muchas (más de MAX_TEMA) es general y no dice de qué trata otra.
+    del_tema = [r for r in vigentes if r.split("/")[0] in ("01_knowledge", "02_decisions", "03_open_questions")]
+    uso = {}
+    for r in del_tema:
+        for tg in set(tags_de(info[r][0])):
+            uso[tg] = uso.get(tg, 0) + 1
+    tags = {r: {tg for tg in tags_de(info[r][0]) if tg not in excluir and uso[tg] <= MAX_TEMA}
+            for r in del_tema}
+
+    def vecinos(r):
+        return datos[1].get(r, set()) | datos[2].get(r, set())
+
+    especificas = {r for r in datos[0] if len(vecinos(r)) <= MAX_TEMA}
+
+    def mismo_tema(r):
+        """Notas que comparten tags o enlaces específicos con r: donde un mismo hecho puede
+        contarse distinto."""
+        if r not in tags:
+            return []
+        vr, puntos = vecinos(r) & especificas, []
+        for x in del_tema:
+            p = len(tags[r] & tags[x]) + len(vr & vecinos(x)) + (x in vr)
+            if x != r and p >= 2:
+                puntos.append((-p, x))
+        return [x for _, x in sorted(puntos)[:3]]
+
+    estado_tablero(raiz)
+    sup = [r for r in vigentes if es_supuesto(info[r][0])]
+    if sup:
+        print("Supuestos sin confirmar (%d):" % len(sup))
+        for r in sup[:15]:
+            print("  [[%s]] · cómo se sabe: %s" % (nombre_nota(r), info[r][0].get("como_se_sabe") or "sin anotar"))
+    if cambiadas:
+        print("Nuevas o editadas, para verificar contra su original y las de su mismo tema (%d):"
+              % len(cambiadas))
+        for r in cambiadas[:20]:
+            original, tema = original_de(raiz, info[r][0]), mismo_tema(r)
+            print("  [[%s]] (%s)%s%s" % (nombre_nota(r), info[r][1], " · original: " + original if original else "",
+                                         " · mismo tema: " + lista_notas(tema) if tema else ""))
+        if len(cambiadas) > 20:
+            print("  ... y %d más" % (len(cambiadas) - 20))
+    duplicados = posibles_duplicados(vigentes, prefijo)
+    if duplicados:
+        print("Posibles duplicados, por nombre: " + ", ".join(
+            "[[%s]] ~ [[%s]]" % (nombre_nota(a), nombre_nota(b)) for a, b in duplicados))
+
+    for r in sorted(info):
+        if vigente(r) or r.startswith("03_open_questions/"):
+            continue
+        desde = sorted(x for x in datos[2][r] if vigente(x))
+        if desde:
+            por = info[r][0].get("reemplazada_por")
+            print("Enlaces a la nota archivada [[%s]]%s: en %s" % (
+                nombre_nota(r), " (reemplazada por %s)" % por if por else "", lista_notas(desde)))
+    print(linea_mapa(datos))
+    detalle_mapa(datos)
+
+    conteo, con_tema = {}, set()
+    for r in vigentes:
+        fm = info[r][0]
+        if (fm.get("tipo") or "").lower() == "tema":
+            con_tema.update(tags_de(fm))
+        elif r.split("/")[0] in ("01_knowledge", "02_decisions", "03_open_questions"):
+            for t in tags_de(fm):
+                conteo[t] = conteo.get(t, 0) + 1
+    temas = sorted(((n, t) for t, n in conteo.items()
+                    if n >= MIN_NOTAS_TEMA and t not in con_tema and t not in excluir), reverse=True)
+    if temas:
+        print("Tags de %d notas o más sin página de tema: %s" % (
+            MIN_NOTAS_TEMA, ", ".join("%s (%d)" % (t, n) for n, t in temas[:8])))
+    sin = [r for r in vigentes if r.startswith("01_knowledge/") and not info[r][0].get("certeza")
+           and (info[r][0].get("tipo") or "conocimiento").lower() == "conocimiento"]
+    if sin:
+        print("Notas de conocimiento sin certeza: %d (márcala al verificar cada una)" % len(sin))
+    print("Al terminar: BRAIN jardin --hecho")
+
+
+def cmd_archivar(args):
+    """Pasa una nota obsoleta o fusionada a <carpeta>/archive/, sin romper enlaces."""
+    raiz = os.path.abspath(args.raiz)
+    base = os.path.join(raiz, ".brainme", "archivados")
+    if args.deshacer:
+        regs = sorted(os.listdir(base)) if os.path.isdir(base) else []
+        if not regs:
+            print("No hay notas archivadas que deshacer.")
+            sys.exit(1)
+        carpeta = os.path.join(base, regs[-1])
+        with open(os.path.join(carpeta, "registro.json"), encoding="utf-8") as f:
+            reg = json.load(f)
+        archivada = os.path.join(raiz, reg["a"])
+        if os.path.exists(archivada):
+            os.remove(archivada)
+        for rel in reg["copias"]:
+            os.makedirs(os.path.dirname(os.path.join(raiz, rel)), exist_ok=True)
+            shutil.copy2(os.path.join(carpeta, "originales", rel), os.path.join(raiz, rel))
+        try:
+            os.rmdir(os.path.dirname(archivada))
+        except OSError:
+            pass
+        shutil.rmtree(carpeta)
+        print("Deshecho: [[%s]] volvió a %s/ y sus enlaces quedaron como estaban." % (
+            nombre_nota(reg["de"]), carpeta_de(reg["de"])))
+        return
+    if not args.nota:
+        print("Uso: BRAIN archivar <nota> [--por <nota>] [--repuntar] | --deshacer")
+        sys.exit(1)
+    rels = listar_archivos(raiz)
+    vigentes = [r for r in notas_resumibles(rels) if vigente(r)]
+    r = buscar_nota(vigentes, args.nota)
+    if r.split("/")[0] not in ("01_knowledge", "02_decisions", "04_sources"):
+        print("Se archivan notas de 01_knowledge, 02_decisions y 04_sources; las preguntas se gradúan (flujo 4).")
+        sys.exit(1)
+    por = buscar_nota(vigentes, args.por) if args.por else None
+    if por == r or (args.repuntar and not por):
+        print("--por necesita otra nota vigente, y --repuntar necesita --por.")
+        sys.exit(1)
+    destino = r.split("/")[0] + "/archive/" + r.rsplit("/", 1)[-1]
+    if os.path.exists(os.path.join(raiz, destino)):
+        print("Ya hay una nota archivada en %s." % destino)
+        sys.exit(1)
+
+    layout = Layout(raiz, buscar_vault(raiz), rels)
+    nombre = nombre_nota(r)
+    nuevo_nombre = nombre_nota(por) if args.repuntar else nombre
+    cuenta, cambios = [0], {}
+    for rel in rels:
+        if rel == r or aparte(rel) or not rel.lower().endswith((".md", ".canvas")):
+            continue
+        texto, crlf = leer_texto(os.path.join(raiz, rel))
+        if texto is None:
+            continue
+        if rel.lower().endswith(".md"):
+            def fw(m, n, rel=rel):
+                obj, frag, alias = partir_wiki(m.group(2))
+                if not obj or layout.resolver_wiki(obj, rel) != r or (not args.repuntar and "/" not in obj):
+                    return None
+                cuenta[0] += 1
+                return "%s[[%s%s%s]]" % (m.group(1), nuevo_nombre, "" if args.repuntar else frag, alias)
+
+            def fm_(m, n, rel=rel):
+                url = m.group(3)
+                limpia = (url[1:-1] if url.startswith("<") else url).split("#", 1)[0]
+                if not limpia or es_url_externa(limpia) or layout.resolver_md(limpia, rel)[0] != r:
+                    return None
+                cuenta[0] += 1
+                return "%s[[%s|%s]]" % (m.group(1), nuevo_nombre, m.group(2))
+
+            nuevo = transformar_enlaces(texto, fw, fm_)
+        else:
+            try:
+                datos = json.loads(texto)
+            except ValueError:
+                continue
+            for nodo in datos.get("nodes", []):
+                obj = layout.desde_vault(nfc(nodo.get("file") or "")) if nodo.get("type") == "file" else None
+                if obj and layout.existe(obj) == r:
+                    nodo["file"] = layout.vault_rel(por if args.repuntar else destino)
+                    cuenta[0] += 1
+            nuevo = json.dumps(datos, ensure_ascii=False, indent="\t")
+        if nuevo != texto:
+            cambios[rel] = (nuevo, crlf)
+
+    carpeta = os.path.join(base, ahora())
+    copias = [r] + sorted(cambios)
+    for rel in copias:
+        os.makedirs(os.path.dirname(os.path.join(carpeta, "originales", rel)), exist_ok=True)
+        shutil.copy2(os.path.join(raiz, rel), os.path.join(carpeta, "originales", rel))
+    with open(os.path.join(carpeta, "registro.json"), "w", encoding="utf-8") as f:
+        json.dump({"de": r, "a": destino, "por": por, "copias": copias}, f, ensure_ascii=False, indent=1)
+    for rel, (nuevo, crlf) in cambios.items():
+        escribir_texto(os.path.join(raiz, rel), nuevo, crlf)
+    texto, crlf = leer_texto(os.path.join(raiz, r))
+    campos = {"archivada": datetime.date.today().isoformat()}
+    if por:
+        campos["reemplazada_por"] = "[[%s]]" % nombre_nota(por)
+    os.makedirs(os.path.dirname(os.path.join(raiz, destino)), exist_ok=True)
+    os.rename(os.path.join(raiz, r), os.path.join(raiz, destino))
+    escribir_texto(os.path.join(raiz, destino), fusionar_frontmatter(texto, campos, []), crlf)
+    print("Archivé [[%s]] en %s/%s." % (nombre, carpeta_de(destino),
+                                        " Reemplazada por [[%s]]." % nombre_nota(por) if por else ""))
+    if cuenta[0]:
+        print("%s %s en %s." % ("Reapunté a [[%s]]" % nuevo_nombre if args.repuntar else "Corregí con su nombre",
+                                cuantos(cuenta[0], "enlace", "enlaces"), cuantos(len(cambios), "archivo", "archivos")))
+    print("Para deshacer: BRAIN archivar --deshacer")
+
+
+def estado_32(raiz, rels):
+    """Líneas de estado que agregó brainme 3.2: supuestos y cuándo toca el jardín."""
+    info = datos_de_notas(raiz, rels)
+    vigentes = [r for r in info if de_memoria(r)]
+    sup = [r for r in vigentes if es_supuesto(info[r][0])]
+    if sup:
+        print("Supuestos sin confirmar: %d -> %s" % (len(sup), lista_notas(sup, 6)))
+    sin = archivos_sin_ficha(raiz, rels)
+    if sin:
+        cats = {}
+        for r in sin:
+            cats[categoria(r)] = cats.get(categoria(r), 0) + 1
+        print("Archivos sin ficha: %s -> %s (dales ficha o enlázalos desde una nota)" % (
+            ", ".join(cuantos(n, UNO_CAT.get(c, c), NOMBRES_CAT.get(c, c)) for c, n in sorted(cats.items())),
+            ", ".join(r.rsplit("/", 1)[-1] for r in sin[:6]) + (" ..." if len(sin) > 6 else "")))
+    ultimo = ultimo_jardin(raiz)
+    cambiadas = [r for r in vigentes if not ultimo or info[r][1] > ultimo]
+    if len(cambiadas) >= UMBRAL_JARDIN:
+        print("Jardín: %s (toca revisar el jardín)" % (
+            "último el %s, y desde entonces hay %d notas nuevas o editadas" % (ultimo, len(cambiadas))
+            if ultimo else "nunca revisado, con %d notas" % len(cambiadas)))
+
+
+# ------------------------------------------------------------ archivos sin ficha
+
+CON_FICHA = ("pdf", "imagen", "office", "presentacion")
+UNO_CAT = {"pdf": "PDF", "imagen": "imagen", "office": "archivo de Office", "presentacion": "presentación"}
+
+
+def archivos_sin_ficha(raiz, rels):
+    """PDFs, imágenes, Office y presentaciones de la estructura (sin inbox ni versiones)
+    que ninguna nota enlaza, incrusta ni nombra en su frontmatter (archivo, pdf). En un
+    entregable de 05_exports, la ficha de su carpeta cuenta para todos sus archivos."""
+    archivos = [r for r in rels if categoria(r) in CON_FICHA and estado_de(r) == "ordenado"
+                and not r.startswith("00_inbox/") and not aparte(r) and "/archive/" not in r
+                and not RE_COPIA_CONFLICTO.match(r.rsplit("/", 1)[-1])]
+    if not archivos:
+        return []
+    notas = [r for r in rels if r.endswith(".md") and estado_de(r) == "ordenado"
+             and not r.startswith("00_inbox/")]
+    layout = Layout(raiz, buscar_vault(raiz), rels)
+    layout.rels = notas
+    con = {e["destino"] for e in recorrer_enlaces(raiz, layout) if e["destino"]}
+    nombrados = set()
+    for r in notas:
+        fm = leer_fm(leer_texto(os.path.join(raiz, r))[0] or "")
+        for campo in ("archivo", "pdf"):
+            v = (fm.get(campo) or "").strip()
+            if v:
+                nombrados.add(clave(v.rsplit("/", 1)[-1]))
+    stems = {clave(r[:-3]) for r in notas}
+    sin = []
+    for r in archivos:
+        carpeta = carpeta_de(r)
+        ficha_carpeta = r.startswith("05_exports/") and clave(
+            carpeta + "/" + carpeta.rsplit("/", 1)[-1]) in stems
+        if r not in con and clave(r.rsplit("/", 1)[-1]) not in nombrados and not ficha_carpeta:
+            sin.append(r)
+    return sin
+
+
+# ------------------------------------------------------------ texto de Office
+
+NS_W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+NS_A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+NS_P = "{http://schemas.openxmlformats.org/presentationml/2006/main}"
+NS_S = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+NS_R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+FILAS_HOJA = 500
+
+
+def xml_de(z, nombre):
+    try:
+        return ET.fromstring(z.read(nombre))
+    except (KeyError, ET.ParseError):
+        return None
+
+
+def destino_rel(base, target):
+    """Ruta dentro del zip de un Target de un archivo .rels relativo a la carpeta base."""
+    if target.startswith("/"):
+        return target.lstrip("/")
+    return os.path.normpath(os.path.join(base, target)).replace(os.sep, "/")
+
+
+def rels_de(z, nombre):
+    """Id -> (tipo, ruta en el zip) del .rels de una parte (p. ej. ppt/slides/slide1.xml)."""
+    carpeta, archivo = nombre.rsplit("/", 1)
+    x = xml_de(z, "%s/_rels/%s.rels" % (carpeta, archivo))
+    if x is None:
+        return {}
+    return {r.get("Id"): (r.get("Type") or "", destino_rel(carpeta, r.get("Target") or ""))
+            for r in x}
+
+
+def parrafo_docx(p):
+    partes = []
+    for el in p.iter():
+        if el.tag == NS_W + "t":
+            partes.append(el.text or "")
+        elif el.tag == NS_W + "tab":
+            partes.append("\t")
+        elif el.tag in (NS_W + "br", NS_W + "cr"):
+            partes.append("\n")
+    return "".join(partes)
+
+
+def texto_docx(z):
+    doc = xml_de(z, "word/document.xml")
+    cuerpo = doc.find(NS_W + "body") if doc is not None else None
+    lineas = []
+    for el in (list(cuerpo) if cuerpo is not None else []):
+        if el.tag == NS_W + "p":
+            lineas.append(parrafo_docx(el))
+        elif el.tag == NS_W + "tbl":
+            for fila in el.iter(NS_W + "tr"):
+                lineas.append(" | ".join(" ".join(parrafo_docx(p) for p in c.iter(NS_W + "p")).strip()
+                                         for c in fila.findall(NS_W + "tc")))
+            lineas.append("")
+    return lineas
+
+
+def parrafos_a(raiz_xml):
+    return [t for t in ("".join(x.text or "" for x in p.iter(NS_A + "t")).strip()
+                        for p in raiz_xml.iter(NS_A + "p")) if t]
+
+
+def texto_pptx(z):
+    rels = rels_de(z, "ppt/presentation.xml")
+    pres = xml_de(z, "ppt/presentation.xml")
+    orden = []
+    if pres is not None:
+        for s in pres.iter(NS_P + "sldId"):
+            tipo, ruta = rels.get(s.get(NS_R + "id"), ("", ""))
+            if ruta:
+                orden.append(ruta)
+    if not orden:
+        orden = sorted((n for n in z.namelist() if re.match(r"ppt/slides/slide\d+\.xml$", n)),
+                       key=lambda n: int(re.search(r"(\d+)\.xml$", n).group(1)))
+    lineas = []
+    for i, ruta in enumerate(orden, 1):
+        diapo = xml_de(z, ruta)
+        if diapo is None:
+            continue
+        lineas += ["## Diapositiva %d" % i] + (parrafos_a(diapo) or ["(sin texto: imagen o gráfico)"])
+        for tipo, destino in rels_de(z, ruta).values():
+            if tipo.endswith("/notesSlide"):
+                notas = xml_de(z, destino)
+                cuerpo = [] if notas is None else [
+                    t for sp in notas.iter(NS_P + "sp")
+                    if any(ph.get("type") == "body" for ph in sp.iter(NS_P + "ph"))
+                    for t in parrafos_a(sp)]
+                if cuerpo:
+                    lineas.append("Notas: " + " ".join(cuerpo))
+        lineas.append("")
+    return lineas
+
+
+def columna(ref):
+    n = 0
+    for c in re.match(r"[A-Z]*", ref or "").group(0):
+        n = n * 26 + ord(c) - 64
+    return n
+
+
+def texto_xlsx(z, max_filas):
+    compartidas = []
+    sst = xml_de(z, "xl/sharedStrings.xml")
+    if sst is not None:
+        compartidas = ["".join(t.text or "" for t in si.iter(NS_S + "t")) for si in sst.findall(NS_S + "si")]
+    libro = xml_de(z, "xl/workbook.xml")
+    rels = rels_de(z, "xl/workbook.xml")
+    lineas = []
+    for hoja in ([] if libro is None else libro.iter(NS_S + "sheet")):
+        x = xml_de(z, rels.get(hoja.get(NS_R + "id"), ("", ""))[1])
+        lineas.append("## Hoja: %s" % hoja.get("name"))
+        filas, resto = 0, 0
+        for fila in ([] if x is None else x.iter(NS_S + "row")):
+            celdas = {}
+            for c in fila.findall(NS_S + "c"):
+                v, tipo = c.find(NS_S + "v"), c.get("t")
+                if tipo == "inlineStr":
+                    valor = "".join(t.text or "" for t in c.iter(NS_S + "t"))
+                elif v is None:
+                    continue
+                elif tipo == "s":
+                    i = int(v.text or 0)
+                    valor = compartidas[i] if i < len(compartidas) else ""
+                else:
+                    valor = v.text or ""
+                if valor.strip():
+                    celdas[columna(c.get("r")) or len(celdas) + 1] = valor.strip().replace("\n", " ")
+            if not celdas:
+                continue
+            if max_filas and filas >= max_filas:
+                resto += 1
+                continue
+            filas += 1
+            lineas.append(" | ".join(celdas.get(i, "") for i in range(1, max(celdas) + 1)))
+        if resto:
+            lineas.append("(%s más: --filas 0 las muestra todas)" % cuantos(resto, "fila", "filas"))
+        lineas.append("")
+    return lineas
+
+
+def cmd_texto(args):
+    ruta = os.path.join(os.path.abspath(args.raiz), os.path.expanduser(args.archivo))
+    ext = os.path.splitext(ruta)[1].lower()
+    if not os.path.isfile(ruta):
+        print("No encuentro %s." % args.archivo)
+        sys.exit(2)
+    if ext not in (".docx", ".xlsx", ".pptx"):
+        print("BRAIN texto lee .docx, .xlsx y .pptx. Un .doc o .rtf: textutil -convert txt -stdout "
+              "\"<archivo>\". Keynote, Pages o Numbers: expórtalo a PDF o al formato de Office.")
+        sys.exit(2)
+    try:
+        with zipfile.ZipFile(ruta) as z:
+            lineas = (texto_docx(z) if ext == ".docx" else texto_pptx(z) if ext == ".pptx"
+                      else texto_xlsx(z, args.filas))
+    except zipfile.BadZipFile:
+        print("%s no se puede abrir: no es un archivo de Office válido o está dañado." % args.archivo)
+        sys.exit(1)
+    texto = re.sub(r"\n{3,}", "\n\n", "\n".join(lineas)).strip()
+    print(texto if texto else "(%s no tiene texto)" % args.archivo)
 
 
 def main():
@@ -2229,6 +2746,17 @@ def main():
     ve.add_argument("--plan", help="ruta del plan para BRAIN mover")
     ve.add_argument("--archivar", action="append", metavar="CARPETA",
                     help="carpeta propia de un entregable cuyo contenido pasa a versiones/ (repetible)")
+    ja = sub.add_parser("jardin")
+    ja.add_argument("--hecho", action="store_true", help="anota que el jardín se revisó hoy")
+    ar = sub.add_parser("archivar")
+    ar.add_argument("nota", nargs="?")
+    ar.add_argument("--por", help="la nota que la reemplaza o donde quedó su contenido")
+    ar.add_argument("--repuntar", action="store_true", help="los enlaces a la nota pasan a la de --por")
+    ar.add_argument("--deshacer", action="store_true", help="revierte el último archivado")
+    tx = sub.add_parser("texto")
+    tx.add_argument("archivo")
+    tx.add_argument("--filas", type=int, default=FILAS_HOJA,
+                    help="máximo de filas por hoja de Excel (0: todas; por defecto %d)" % FILAS_HOJA)
     sub.add_parser("espacio")
     cr = sub.add_parser("crear")
     cr.add_argument("carpeta", nargs="?", help="por defecto, la actual; en un espacio, desde su raíz")
@@ -2242,6 +2770,7 @@ def main():
                 "poner-resumenes": cmd_poner_resumenes, "autor": cmd_autor,
                 "bitacora": cmd_bitacora, "consumo": cmd_consumo, "migrar": cmd_migrar,
                 "versiones": cmd_versiones, "espacio": cmd_espacio, "crear": cmd_crear,
+                "jardin": cmd_jardin, "archivar": cmd_archivar, "texto": cmd_texto,
                 "version": lambda a: print(VERSION)}
     if args.cmd not in comandos:
         p.print_help()

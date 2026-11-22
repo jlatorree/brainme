@@ -8,6 +8,9 @@ autor: "<quién la escribe: BRAIN autor>"
 tags: [<tema-1>, <tema-2>]
 relacionadas: ["[[nota-existente-1]]", "[[nota-existente-2]]"]
 origen: "<nombre-del-original (inbox, AAAA-MM-DD) o conversación AAAA-MM-DD>"
+# Solo conocimiento: cómo se sabe
+certeza: <confirmado | supuesto>
+como_se_sabe: "<quién o qué lo confirmó y cuándo, o de qué se dedujo>"
 # estado: decisión = propuesta | tomada | revertida; pregunta = abierta | resuelta; conocimiento = borra el campo
 estado: <según el tipo>
 # Solo decisiones:
@@ -36,11 +39,16 @@ Instrucciones de la plantilla (bórralas al crear la nota):
 Qué situación, reunión o pregunta dio origen a esto. Una o dos frases.
 
 ## Contenido
-La idea en sí: lo que se aprendió, decidió o se pregunta. Sé concreto (datos,
-cifras, nombres). Enlaza conceptos y otras notas con [[wikilinks]]: eso alimenta
-el mapa.
+Lo que se aprendió, decidió o se pregunta, y qué cambia para el proyecto. Del
+original, solo lo necesario para entenderlo: el resto se busca en él. Sé concreto
+(datos, cifras, nombres) y enlaza conceptos y otras notas con [[wikilinks]]: eso
+alimenta el mapa.
 
 - En una **pregunta**: formúlala en una frase y resume qué se sabe hoy.
+
+## Texto exacto
+<!-- Solo datos críticos: requisitos, términos, plazos, montos, compromisos -->
+> "<texto palabra por palabra>" (<original>, p. <n>)
 
 ## Por qué importa / implicaciones
 El razonamiento detrás y qué cambia en el proyecto a partir de esto.

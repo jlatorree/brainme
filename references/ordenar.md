@@ -31,7 +31,7 @@ en `.brainme/`, fuera del mapa.
    | Informe, documento de trabajo o entregable (también versiones finales ya enviadas) | `05_exports/<reports, diagrams, data o presentations>/<entregable>/`, una carpeta por entregable con su nombre sin versión |
    | Canvas de Obsidian (`.canvas`) | `05_exports/diagrams/<canvas>/` |
    | Adjunto: imagen o PDF que una nota incrusta ("usado por" mayor que 0) | La misma carpeta que la nota que lo usa |
-      | Algo que no sabes qué es (código, zips, formatos raros) | Se queda donde está; pregunta |
+   | Algo que no sabes qué es (código, zips, formatos raros) | Se queda donde está; pregunta |
 
    Reglas:
    - Los archivos conservan su nombre. Excepción: dos archivos con el mismo nombre
@@ -72,8 +72,8 @@ en `.brainme/`, fuera del mapa.
    repetidos que reporte. `BRAIN verificar` repite el chequeo cuando quieras. Si
    llegaron varias versiones de un entregable, ordénalas como en
    `references/entregables.md` («Ordenar»).
-8. **Sincroniza.** Si es la primera vez y hay PDFs, imágenes u Office, ofrece la
-   lectura profunda (o Graphify, si el proyecto no lo usa) diciendo cuántos archivos son.
+8. **Sincroniza.** Si quedaron PDFs, imágenes u Office sin ficha, ofrece leerlos con
+   `brainme:lector` para crearlas, diciendo cuántos son.
 9. **Cuéntale en simple:** cuántos archivos ordenó y dónde, cuántos enlaces corrigió,
    qué quedó en `00_inbox/` para procesar y qué dejó sin tocar. Ofrece procesar el
    inbox (flujo 2), por tandas si son muchos.

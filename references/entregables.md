@@ -3,9 +3,10 @@
 Los entregables ricos (diagramas, presentaciones, exceles, HTML) los generan otros
 skills; brainme decide dónde vive cada uno y lo conecta al mapa.
 
-**Terminado cuando:** el entregable está en su carpeta, con la versión vigente a la
-vista y las anteriores en `versiones/`; tiene ficha si no es `.md`, la ficha enlaza lo
-que lo sustenta, y el proyecto está sincronizado.
+**Terminado cuando:** cada nota que cita el entregable pasó la revisión de abajo; el
+entregable está en su carpeta, con la versión vigente a la vista y las anteriores en
+`versiones/`; tiene ficha si no es `.md`, la ficha enlaza lo que lo sustenta, y el
+proyecto está sincronizado.
 
 Cada entregable tiene su carpeta, con su nombre sin versión:
 
@@ -24,17 +25,27 @@ markdown, escríbelo en `05_exports/reports/<informe>/<informe>-v1.md` citando n
 wikilinks (y fuentes con doble cita). Si piden un formato rico (HTML, diagrama,
 presentación, excel), usa el skill que corresponda y guarda aquí el resultado.
 
-| Entregable | Tipo | Lectura profunda (con Graphify) | Qué haces |
-|---|---|---|---|
-| Informe `.md` / `.html` | `reports/` | No hace falta: es nota | Frontmatter y wikilinks a sus fuentes (en `.html`, ficha) |
-| Diagrama `.png` `.jpg` `.svg` | `diagrams/` | Como imagen | Ficha |
-| Excel / Word `.xlsx` `.docx` | `data/` | Con el extra `office` | Ficha |
-| Presentación `.key` `.pptx` | `presentations/` | Su PDF sí (extra `pdf`); el binario no | Ficha + PDF exportado |
+**Revisión antes de entregar:** `BRAIN mapa --nota <entregable o su ficha>` lista las
+notas que cita y marca los supuestos y las archivadas.
+- Un supuesto se confirma en su original, o el entregable lo presenta como supuesto.
+- Una nota archivada se cambia por la que la reemplaza; sin reemplazo, lo que decía ya
+  no vale.
+- Un dato crítico (monto, plazo, requisito) se cita de su `## Texto exacto`, palabra por
+  palabra.
+
+Al entregar, dile al usuario qué quedó como supuesto.
+
+| Entregable | Tipo | Qué haces |
+|---|---|---|
+| Informe `.md` / `.html` | `reports/` | Frontmatter y wikilinks a sus fuentes (en `.html`, ficha) |
+| Diagrama `.png` `.jpg` `.svg` | `diagrams/` | Ficha |
+| Excel / Word `.xlsx` `.docx` | `data/` | Ficha |
+| Presentación `.key` `.pptx` | `presentations/` | Ficha + PDF exportado |
 
 - **Ficha:** con `templates/deliverable-card.md`, una por entregable, en su carpeta y
   con su nombre sin versión (`diagrama-journey/diagrama-journey.md`). Enlaza con
   wikilinks las decisiones, notas y fuentes que lo sustentan: así el output queda
-  conectado a su razonamiento, y el mapa lo encuentra sin lectura profunda.
+  conectado a su razonamiento, y el mapa lo encuentra.
 - **Presentaciones:** si el skill que la generó no dejó un PDF, expórtalo con Keynote
   (sirve para `.key` y `.pptx`; la primera vez macOS pide permiso para controlar
   Keynote):
@@ -73,5 +84,4 @@ presentación, excel), usa el skill que corresponda y guarda aquí el resultado.
 - **Generadores:** los scripts o pipelines que producen un entregable van a `_taller/`
   en la raíz del proyecto, con un nombre que diga qué generan. Quedan fuera de las
   búsquedas y del mapa.
-- Al terminar: sincroniza. Si hay imágenes, PDFs u Office nuevos, el proyecto usa
-  Graphify y el usuario quiere que se lea su contenido, lectura profunda.
+- Al terminar: sincroniza.

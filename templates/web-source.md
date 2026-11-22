@@ -1,8 +1,7 @@
 ---
 titulo: "<Título de la página o documento>"
 tipo: fuente-web
-# source_url: Graphify copia este campo a cada concepto que extrae de la nota,
-# así cada respuesta del grafo lleva su link de origen.
+# source_url: el enlace canónico, el mismo que va en la doble cita.
 source_url: "<https://enlace-canónico>"
 sitio: "<organización o medio>"
 autor: "<autor u organización>"
