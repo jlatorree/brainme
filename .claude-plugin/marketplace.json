@@ -9,7 +9,7 @@
     {
       "name": "brainme",
       "source": "./",
-      "description": "Segundo cerebro de proyectos en carpetas de notas markdown (ideal para Obsidian): configura y ordena la carpeta, procesa el inbox en notas atómicas conectadas, gestiona preguntas y decisiones, guarda fichas de papers y webs con doble cita y organiza entregables. Un tablero lleva lo vigente a cada sesión y la revisión del jardín verifica y consolida la memoria. Con el modo multiproyecto, varios proyectos comparten un contexto general y sus reglas. Gasta pocos tokens: resumen en cada nota, ayudantes con el modelo justo y handoff a una sesión nueva.",
+      "description": "Segundo cerebro de proyectos en notas markdown (ideal para Obsidian): procesa el inbox en notas conectadas, responde qué se sabe y qué se decidió con enlaces a sus notas, lleva un tablero con lo vigente y una bitácora de cada sesión, y hace handoff a una sesión nueva. Con el modo multiproyecto, varios proyectos comparten un contexto general.",
       "author": {
         "name": "jlatorree",
         "url": "https://github.com/jlatorree"
@@ -24,7 +24,7 @@
         "second-brain"
       ],
       "category": "productivity",
-      "version": "3.3.0"
+      "version": "4.0.0"
     }
   ]
 }

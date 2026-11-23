@@ -2,139 +2,75 @@
 
 ```
 <carpeta multiproyecto>/
-  CLAUDE.md                     sección ## brainme · multiproyecto: reglas y configuración
-  <general>/                    contexto general: proyecto brainme con lo que sirve a todos
+  CLAUDE.md                     sección ## brainme · multiproyecto: reglas comunes
+  general/                      contexto general: un proyecto brainme con lo que sirve a todos
   proyectos/<año>/<proyecto>/   un proyecto brainme por carpeta, con su ficha y su prefijo
 ```
 
-`<año>` es el año en que se abre el proyecto. Un proyecto cerrado se queda en su carpeta,
-con `Estado: cerrado` en su ficha: lo que se aprendió sigue a mano.
-
-Hasta la 3.2 se llamaba «espacio»: las carpetas con `## brainme · espacio` y `**Espacio:**`
-funcionan igual, sin cambiarles nada.
-
-## Los `CLAUDE.md` de la carpeta
-
-- El texto del usuario fuera de la sección de brainme (quiénes son, documentos que
-  importa con `@`, reglas de su oficio) es suyo: se cambia solo con su OK.
-- Se cargan en cada respuesta de cada sesión de adentro: lo nuevo se integra en la
-  sección de su tema, y cada archivo queda bajo 200 líneas.
-- En la bitácora del contexto general, los proyectos van sin nombre ("abrí un proyecto
-  nuevo").
+El `CLAUDE.md` de la raíz se carga en cada sesión de adentro: lo nuevo se integra en la
+sección de su tema y el archivo queda bajo 200 líneas. El texto del usuario fuera de la
+sección de brainme se cambia solo con su OK.
 
 ## Configurar ("quiero llevar varios proyectos")
 
-**Terminado cuando:** el `CLAUDE.md` de la carpeta tiene la sección `## brainme ·
-multiproyecto`, existe el contexto general, `brainme autor` tiene nombre y el usuario recibió
-el mensaje final.
+**Terminado cuando:** el `CLAUDE.md` de la carpeta tiene la sección
+`## brainme · multiproyecto`, existe el contexto general y `brainme autor` tiene nombre.
 
-1. **Carpeta y Python:** como en `brainme guia configurar`.
-2. **Pregunta en un solo mensaje**, con estas respuestas por defecto:
-   - nombre de la carpeta y de qué trata;
-   - nombre del contexto general (`general`);
-   - campos de la ficha de cada proyecto, además de estado y prefijo (objetivo,
-     alcance, personas a cargo, fechas clave);
-   - revisión antes de entregar: ninguna, la de un archivo o la de un skill;
-   - nota al cerrar un proyecto: la de brainme, la de un archivo o la de un skill;
-   - de dónde llegan las notas de reunión: de ningún lado, de Granola o de una carpeta.
-3. **`CLAUDE.md`:** créalo desde `templates/CLAUDE-multiproyecto.md` con las respuestas y
-   quita las viñetas que no aplican. Si ya existe, agrega la sección al final.
-4. **Autor:** como en `brainme guia configurar`.
-5. **Contexto general:** `brainme crear <general> --trata "<de qué trata>"`.
-6. **Mensaje final**, por ejemplo:
-
-   ```
-   Listo, esta carpeta ya lleva varios proyectos con brainme:
-   - <general>/ guarda lo que sirve a todos los proyectos.
-   - Cada proyecto vive en proyectos/<año>/, con su ficha y un prefijo en sus notas.
-   - Las reglas comunes se cargan en cada sesión que abras adentro.
-   Para empezar, dime "nuevo proyecto: <nombre>".
-   ```
+1. Carpeta y Python, como en `references/configurar.md`.
+2. Pregunta en un solo mensaje de qué trata la carpeta, si el contexto general se llama
+   `general` y qué campos quiere en la ficha de cada proyecto además de estado y prefijo
+   (por ejemplo objetivo, personas a cargo, fechas clave). Si tiene reglas propias (una
+   revisión antes de entregar, de dónde llegan las notas de reunión), anótalas.
+3. `brainme crear --multiproyecto --trata "<de qué trata>"` (con `--general <nombre>` si
+   no es `general`). Agrega a la ficha de la raíz los campos y reglas que pidió.
+4. Autor, como en `references/configurar.md`.
+5. Cuéntale en pocas líneas cómo queda, y que para empezar diga "nuevo proyecto: <nombre>".
 
 ## Nuevo proyecto ("nuevo proyecto: ...")
 
-**Terminado cuando:** `proyectos/<año>/<carpeta>/` tiene `CLAUDE.md` con su ficha llena
-con lo que se sabe hoy, y el usuario tiene abierta la sesión nueva en esa carpeta (o la
-frase para abrirla).
+**Terminado cuando:** `proyectos/<año>/<carpeta>/` tiene su `CLAUDE.md` con la ficha llena
+con lo que se sabe hoy, y la sesión nueva en esa carpeta quedó abierta (o el usuario tiene
+la frase para abrirla).
 
 1. Acuerda con el usuario el nombre de la carpeta (minúsculas, guiones, sin tildes) y un
-   prefijo corto para sus notas. `brainme multiproyecto` muestra los prefijos en uso.
+   prefijo corto para sus notas, distinto de los que ya se usan (`brainme estado` en la
+   raíz los muestra).
 2. `brainme crear proyectos/<año en curso>/<carpeta> --prefijo <prefijo> --trata "<de qué
-   trata>"`. La ruta va desde la raíz de la carpeta multiproyecto, aunque la sesión esté en
-   el contexto general.
-3. Llena la ficha (`## Proyecto` de su `CLAUDE.md`) con lo que el usuario sabe hoy; lo
-   demás queda `<por completar>`. En su `tablero.md`, el objetivo actual y el primer
-   paso.
-4. **Abre la sesión nueva** en esa carpeta, con el primer mensaje `brainme`: si tienes
-   una herramienta para iniciar sesiones de Claude Code (la app de escritorio la tiene),
-   créala con esa carpeta como directorio de trabajo; si no, dile al usuario que abra
-   Claude Code en esa carpeta y escriba `brainme`.
+   trata>"`, con la ruta desde la raíz de la carpeta multiproyecto.
+3. Llena la ficha (`## Proyecto` de su `CLAUDE.md`) con lo que el usuario sabe hoy, y en
+   su tablero el objetivo y el primer paso.
+4. Abre una sesión nueva en esa carpeta con el primer mensaje `brainme`: con la
+   herramienta para iniciar sesiones si la tienes, o dile al usuario que abra Claude Code
+   ahí y escriba `brainme`.
 
 ## Panorama ("cómo van los proyectos")
 
-1. `brainme multiproyecto`.
-2. Resume en hasta 10 líneas, solo con esa salida: una línea por proyecto abierto (en qué
-   está, de su última sesión, y qué sigue, de su tablero) y lo que pide atención: inbox con
-   pendientes, proyectos sin sesiones hace más de dos semanas y fichas por completar.
+`brainme estado` en la raíz. Resume en hasta 10 líneas, solo con esa salida: una por
+proyecto abierto (en qué está y qué sigue) y lo que pide atención (inbox pendiente,
+proyectos sin sesiones hace más de dos semanas).
 
 ## Llevar algo al contexto general ("lleva esto al contexto general")
 
 **Terminado cuando:** el inbox del contexto general tiene una versión sin datos del
-proyecto, aprobada por el usuario, y la nota de origen lo anota.
+proyecto, aprobada por el usuario.
 
-1. Escribe la versión general en `.brainme/llevar.md`, solo el texto: la idea, el aprendizaje
-   o el método, sin nombres de organizaciones ni personas, cifras, fechas, cómo se supo o
-   detalles que identifiquen al proyecto.
-2. `brainme llevar .brainme/llevar.md --de <nota> --tema <tema>` la revisa. Si señala algo,
-   reescríbela; lo que no es un dato del proyecto, pregúntaselo al usuario y `--permitir`.
-3. Muéstrasela junto con lo que quitaste y pide un OK.
-4. Con el OK, el mismo comando con `--ok` la deja en el inbox del contexto general y lo anota
-   en la nota de origen. Ahí se procesa en su próxima sesión: dilo.
+1. Escribe la versión general: la idea, el aprendizaje o el método, sin nombres de
+   organizaciones ni personas, cifras, fechas ni detalles que identifiquen al proyecto.
+2. Muéstrasela junto con lo que quitaste y pide un OK.
+3. Con el OK, guárdala como archivo `.md` en el `00_inbox/` del contexto general, y anota
+   en la nota de origen que se llevó. Se procesa en la próxima sesión del contexto general.
 
 ## Cerrar un proyecto ("cierra el proyecto")
 
-Se hace en la sesión del proyecto, que tiene su contexto. Si el pedido llega desde otra,
-ofrece abrirla (paso 4 de "Nuevo proyecto").
+**Terminado cuando:** el proyecto tiene su nota de cierre, lo que sirve a otros quedó en el
+inbox del contexto general con OK y su ficha dice `cerrado`.
 
-**Terminado cuando:** el proyecto tiene su nota de cierre, lo que sirve a otros está en el
-inbox del contexto general con OK, y su ficha dice `cerrado`.
-
-1. `brainme estado`. Si hay inbox sin procesar o preguntas abiertas, muéstralo y ofrece
-   procesarlo o graduarlas; el usuario decide qué queda así.
-2. **Nota de cierre:** la que diga "Al cerrar un proyecto" en el `CLAUDE.md` de la carpeta
-   multiproyecto. La de brainme es `01_knowledge/<prefijo>cierre.md` (`tipo:
-   conocimiento`): qué se logró, qué aprendimos, qué haríamos distinto y qué quedó abierto,
-   enlazada a las decisiones clave.
-3. Lo que sirve a otros proyectos va al contexto general con "Llevar", con un solo OK
-   para toda la lista.
+1. `brainme estado`. Si hay inbox sin procesar o preguntas abiertas, muéstralo; el usuario
+   decide qué queda así.
+2. **Nota de cierre** en `01_knowledge/<prefijo>cierre.md`: qué se logró, qué aprendimos,
+   qué haríamos distinto y qué quedó abierto, solo con lo que consta, enlazada a las
+   decisiones clave. Si la raíz pide otra nota de cierre, esa.
+3. Lo que sirve a otros proyectos va al contexto general ("Llevar"), con un solo OK para
+   toda la lista.
 4. En la ficha, `Estado: cerrado AAAA-MM-DD`. El proyecto se queda en su carpeta; para
    reabrirlo, vuelve a `activo`.
-
-## Convertir una carpeta armada a mano
-
-Se sigue cuando `brainme estado` o `brainme multiproyecto` dice "armada a mano", o cuando el
-usuario lo pide.
-
-**Terminado cuando:** `brainme multiproyecto` muestra todos los proyectos en
-`proyectos/<año>/`, cada ficha tiene estado y prefijo, `brainme verificar` no muestra
-enlaces rotos en los proyectos movidos y el usuario aprobó cada cambio a su texto.
-
-1. `brainme multiproyecto`: la carpeta y sus proyectos brainme.
-2. Lee el `CLAUDE.md` de la raíz y, de cada proyecto, solo su `CLAUDE.md`. Identifica el
-   contexto general, los campos de las fichas, la revisión antes de entregar, la nota al
-   cerrar, de dónde llegan las reuniones, y las reglas que ya cubre la sección de brainme
-   (aislamiento entre proyectos, qué manda, ciclo de un proyecto).
-3. **Plan con un solo OK**, en una tabla corta:
-   - la sección `## brainme · multiproyecto`, llenada con lo que el archivo ya dice;
-   - las líneas del usuario que esa sección vuelve repetidas, citadas, para quitarlas;
-   - por proyecto: estado y prefijo en su ficha si faltan, y las secciones que repiten
-     lo que ya dice el `CLAUDE.md` de la carpeta;
-   - cada proyecto, salvo el contexto general, a `proyectos/<año>/`, con el año de su
-     "Configurado con brainme".
-4. **Respaldo:** copia cada `CLAUDE.md` que vas a cambiar a
-   `.brainme/conversion-multiproyecto/AAAA-MM-DD/`, en la raíz de la carpeta, con su ruta.
-5. Aplica el plan. En cada proyecto movido, `brainme --raiz <proyecto> verificar`: los
-   wikilinks siguen funcionando, pero un link markdown hacia fuera del proyecto puede
-   romperse; corrígelo. Verifica con `brainme multiproyecto`.
-6. Cuenta en simple qué cambió. Para deshacer: copiar de vuelta los respaldos y mover
-   los proyectos a su lugar anterior.
