@@ -27,7 +27,7 @@ reglas.
 | "procesa el inbox" | Convierte lo que hay en el inbox en notas. |
 | "guarda esto" | Lo deja en su nota, enlazada a las demás. |
 | "haz un informe de…" | Lo arma con las notas y dice qué es supuesto. |
-| "revisa las notas" | Encuentra lo suelto, roto o duplicado y te propone cómo arreglarlo. |
+| "revisa las notas" | Relee las notas contra sus originales, por tandas, y te propone cómo arreglar lo que cambió, lo suelto y lo duplicado. |
 | "ordena esta carpeta" | Si ya tenías trabajo, lo pone en la estructura sin romper los enlaces, con respaldo y deshacer. |
 | "ayúdame con un handoff" | Guarda lo pendiente y abre una sesión nueva que sigue desde ahí. |
 | "nuevo proyecto: …" | En una carpeta multiproyecto, abre un proyecto con su ficha. |
@@ -76,11 +76,13 @@ bitacora.md          qué se hizo en cada sesión, quién y qué sigue
 | Archivo | Rol |
 | --- | --- |
 | `SKILL.md` | El skill: flujos y cómo se escriben las notas. |
-| `references/` | Configurar, inbox, ordenar, handoff, multiproyecto y redacción. |
+| `references/` | Configurar, inbox, jardín, ordenar, handoff, multiproyecto y redacción. |
 | `templates/` | Nota, tablero y `CLAUDE.md` de proyecto y de carpeta multiproyecto. |
-| `scripts/brainme.py` | Diez comandos: estado, buscar, leer, inbox, procesado, comprueba, bitácora, autor, crear y ordenar. Python 3, sin dependencias. Lee el proyecto y no mueve ni reescribe notas. |
-| `scripts/ordenar.py` | Lo único que mueve archivos: ordena una carpeta con avance previo según un plan aprobado, corrige los enlaces y permite deshacer. |
+| `scripts/brainme.py` | Once comandos: estado, buscar, leer, inbox, procesado, comprueba, jardín, bitácora, autor, crear y ordenar. Python 3, sin dependencias. Lee el proyecto y no mueve ni reescribe notas. |
+| `scripts/ordenar.py` | Lo único que mueve archivos o les escribe: ordena una carpeta con avance previo según un plan aprobado, corrige los enlaces, permite deshacer y pone los resúmenes que faltan. |
 | `agents/lector.md` | Ayudante que lee documentos largos. |
+| `agents/resumidor.md` | Ayudante que escribe los resúmenes que faltan, por lotes. |
 | `commands/handoff.md` | El comando `/brainme:handoff`. |
 | `tests/` | Pruebas del script, sin gastar tokens: `python3 -m unittest discover tests`. |
+| `evals/` | Un proyecto de prueba con 10 preguntas de respuesta conocida, para comparar versiones. |
 | `.claude-plugin/` | Manifiestos del plugin y del marketplace. |

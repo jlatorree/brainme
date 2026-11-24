@@ -11,11 +11,9 @@ corres los comandos y le cuentas en pocas líneas, en lenguaje simple, qué hici
 sigue.
 
 Las notas guardan lo que no se puede volver a leer en ningún original: qué se decidió y
-por qué, qué se supo y cómo, qué sigue abierto. Lo que un original ya dice (un acta, un
-PDF) se queda en él, y la nota dice de dónde salió. Cada cosa tiene su lugar: `CLAUDE.md`
-dice qué es el proyecto y sus reglas; `tablero.md`, lo vigente (objetivo, plan, próximos
-pasos), y se carga en cada sesión; `bitacora.md`, qué se hizo y quién; las notas, lo que
-se sabe. Escribes como pide `references/redaccion.md`: cada frase aporta algo concreto.
+por qué, qué se supo y cómo, qué trampas aparecieron, qué sigue abierto. Lo que un original
+ya dice (un acta, un PDF) se queda en él, y la nota dice de dónde salió. Cada frase que
+escribes aporta algo concreto.
 
 ## Al invocarte
 
@@ -24,29 +22,17 @@ se sabe. Escribes como pide `references/redaccion.md`: cada frase aporta algo co
    - con `## brainme · multiproyecto`, es la raíz de una carpeta multiproyecto: lee
      `references/multiproyecto.md`.
 2. Atiende lo pedido con su flujo. "brainme" a secas es Ponerse al día.
-3. Si hay archivos en `00_inbox/`, procésalos en esta sesión (flujo Inbox); si el pedido
-   era otro, ofrécelo al terminar.
+3. Si hay archivos en `00_inbox/`: con "brainme" a secas, procésalos después de ponerte al
+   día (flujo Inbox); con otro pedido, ofrécelo al terminar.
 4. Al terminar un flujo que cambió algo, pon al día el tablero si cambió lo vigente y
    anota la bitácora, lo último: `brainme bitacora "<qué se hizo>" --sigue "<qué sigue>"`.
    Si responde "Antes de terminar, corrige", corrígelo antes de tu mensaje.
 
 ## Comandos
 
-`brainme <comando>`, desde la raíz del proyecto y uno por línea. Si responde "command not
-found", usa `python3 "<carpeta de este skill>/scripts/brainme.py" <comando>`.
-
-| Comando | Para qué |
-|---|---|
-| `estado` | ponerse al día: inbox, preguntas, decisiones, tablero y última sesión |
-| `buscar <palabras>` | notas que hablan de algo; varias búsquedas, separadas con comas |
-| `leer <nota o archivo> ...` | notas completas con sus enlaces y su original; texto de Word, Excel y PowerPoint |
-| `inbox` | qué hay en `00_inbox/` y el `origen` de lo que salga de cada archivo |
-| `procesado <archivo> ... [--a <carpeta>]` | saca del inbox lo ya procesado, sin escribir encima de nada |
-| `comprueba [--todo]` | lo escrito hoy, o todo el proyecto: resumen, enlaces, nombres y los campos de cada tipo |
-| `bitacora "<qué>" --sigue "<qué sigue>"` | anota la sesión; también `--ultimas N`, `--handoff <archivo>`, `--handoff-ultimo` |
-| `autor ["Nombre"]` | quién firma la bitácora en este computador |
-| `crear` | carpetas, tablero y `CLAUDE.md` (lo usan la configuración y el multiproyecto) |
-| `ordenar <acción>` | ordenar una carpeta con avance previo (flujo Ordenar) |
+`brainme <comando>`, desde la raíz del proyecto y uno por línea; cada flujo dice cuál, y
+`brainme <comando> --help`, sus opciones. Si responde "command not found", usa
+`python3 "<carpeta de este skill>/scripts/brainme.py" <comando>`.
 
 ## Flujos
 
@@ -66,11 +52,11 @@ como tales y lo que no está se dice que no está.
 1. `brainme buscar <palabras de la pregunta>`. Si lo que sale no la responde, repite con
    las palabras que usaría quien escribió la nota.
 2. `brainme leer` las que responden. Si no alcanzan, o la respuesta va a una decisión o a
-   un entregable, lee también su original: `leer` lo indica.
+   un entregable, `brainme leer --original`.
 3. Responde en la primera frase lo que se preguntó. Si juntaste algo que ninguna nota
    decía, ofrece guardarlo.
 
-### Guardar ("guarda esto", "anota que...")
+### Guardar ("guarda esto", "anota que...", o algo que claramente lo vale)
 
 **Terminado cuando:** cada idea está en una sola nota que dice de dónde salió, enlazada a
 otra, y el usuario sabe cuál es.
@@ -80,40 +66,26 @@ otra, y el usuario sabe cuál es.
    notas enlazadas entre sí.
 3. `brainme comprueba` y confirma en una línea: "Guardé [[nombre]], enlazada a [[x]]."
 
-### Inbox ("procesa el inbox", o hay algo en `00_inbox/`)
+### Inbox ("procesa el inbox")
 
 Lee `references/inbox.md` y síguelo.
 
-### Preguntas abiertas
-
-Una por archivo en `03_open_questions/`, con `estado: abierta`. Cuando se responde, la
-respuesta va a su nota (de conocimiento o decisión) enlazada a la pregunta; la pregunta
-pasa a `estado: resuelta`, enlaza la respuesta y se mueve a `03_open_questions/archive/`.
-
 ### Entregables ("haz un informe de...")
+
+**Terminado cuando:** cada dato crítico coincide palabra por palabra con su `## Texto exacto`
+o su original, cada supuesto se dice como tal y el entregable enlaza las notas que lo
+sustentan.
 
 1. Busca y lee las notas que lo sustentan. Cada dato crítico (monto, plazo, requisito) sale
    de su `## Texto exacto`, palabra por palabra; si la nota no lo tiene, de su original
-   (`leer` lo indica), y si no coinciden, rige el original y la nota se corrige.
+   (`brainme leer --original`), y si no coinciden, rige el original y la nota se corrige.
 2. Si se apoya en supuestos, el entregable lo dice.
-3. Va en `05_exports/` con un nombre claro y su versión (`informe-precios-v1.md`), y
-   enlaza las notas que lo sustentan.
+3. Va en `05_exports/` con su versión en el nombre (`informe-precios-v1.md`).
+4. Revísalo con `references/redaccion.md` antes de mostrarlo.
 
 ### Jardín ("revisa las notas", "revisa el jardín")
 
-**Terminado cuando:** cada cosa que listó `brainme comprueba --todo` quedó resuelta o el
-usuario decidió dejarla así.
-
-1. `brainme comprueba --todo`.
-2. Lee las notas que nombra. En cada duplicado, y entre las notas de un mismo tema, mira
-   si cuentan distinto un mismo hecho: rige lo más reciente que alguien sostiene, y la
-   otra nota se corrige con una línea en `## Actualizaciones`; si no se sabe cuál rige,
-   una pregunta abierta.
-3. Propón en una tabla corta qué harás con cada cosa que listó. Un par de duplicados se
-   fusiona: la que queda recibe en `## Actualizaciones` cada dato de la otra, que pasa al
-   `archive/` de su carpeta. El resumen y el enlace que faltan salen de la nota; quién
-   decidió o cuánto pesa una pregunta, de la nota, su original o el usuario.
-4. Con el OK del usuario, aplícalo y corre otra vez `brainme comprueba --todo`.
+Lee `references/jardin.md` y síguelo.
 
 ### Ordenar ("ordena esta carpeta", o una carpeta que ya tenía trabajo)
 
@@ -131,6 +103,10 @@ Lee `references/multiproyecto.md` y sigue su parte.
 ## Notas
 
 ```
+CLAUDE.md            qué es el proyecto y sus reglas
+tablero.md           lo vigente: objetivo, plan, próximos pasos y reglas aprendidas (lo que
+                     ya costó una vez); se carga en cada sesión
+bitacora.md          qué se hizo, quién y qué sigue
 00_inbox/            lo que llega; se vacía al procesarse
 01_knowledge/        lo que se sabe
 02_decisions/        lo que se decidió, por qué y qué se descartó
@@ -163,6 +139,9 @@ Lee `references/multiproyecto.md` y sigue su parte.
 - **Una decisión que cambia** va en una nota nueva, con `reemplaza_a: "[[decision-anterior]]"`.
   La anterior pasa a `estado: revertida`, con una línea en `## Actualizaciones` que enlaza la
   nueva.
+- **Una pregunta que se responde:** la respuesta va a su nota (de conocimiento o decisión),
+  enlazada a la pregunta; la pregunta pasa a `estado: resuelta`, enlaza la respuesta y se
+  mueve a `03_open_questions/archive/`.
 - **Documentos largos** (PDF, Office o transcripción de más de ~3.000 palabras): los lee el
   ayudante `brainme:lector`, que devuelve un borrador de notas. Sin el plugin, un
   subagente general con las instrucciones de `agents/lector.md`.

@@ -9,17 +9,20 @@ Comandos (se corren desde la raíz del proyecto):
   leer        notas completas con sus enlaces, y el texto de Word, Excel o PowerPoint
   inbox       lo que hay en 00_inbox/ y el origen que llevará lo que salga de cada archivo
   procesado   saca del inbox un archivo ya procesado, sin escribir encima de otro
-  comprueba   lo escrito hoy (o, con --todo, todo el proyecto): resumen, enlaces y nombres
+  comprueba   lo escrito hoy (o, con --todo, todo el proyecto): resumen, enlaces, nombres y campos
+  jardin      la próxima tanda de notas por revisar contra su original, y marca las revisadas
   bitacora    agrega o muestra entradas de bitacora.md, también los handoffs
   ordenar     pone en la estructura una carpeta con avance previo (scripts/ordenar.py)
 
 Solo lee y escribe dentro del proyecto. No mueve ni reescribe notas, salvo `ordenar mover` y
-`ordenar deshacer`, que mueven archivos con un plan aprobado y corrigen sus enlaces. Usa solo
+`ordenar deshacer`, que mueven archivos con un plan aprobado y corrigen sus enlaces, y
+`ordenar resumenes --poner`, que agrega los resúmenes que faltan. Usa solo
 la biblioteca estándar de Python (3.9 o superior).
 """
 
 import argparse
 import datetime
+import hashlib
 import json
 import os
 import re
@@ -28,7 +31,7 @@ import unicodedata
 import zipfile
 import xml.etree.ElementTree as ET
 
-VERSION = "4.1.0"
+VERSION = "4.2.0"
 
 CARPETAS = ["00_inbox", "01_knowledge", "02_decisions", "03_open_questions", "04_sources", "05_exports"]
 CARPETAS_NOTAS = ("01_knowledge", "02_decisions", "03_open_questions", "04_sources", "05_exports")
@@ -36,12 +39,14 @@ CARPETAS_NOTAS = ("01_knowledge", "02_decisions", "03_open_questions", "04_sourc
 OCULTAS = {".git", ".obsidian", ".trash", ".claude", ".brainme", "graphify-out", "node_modules", ".claude-plugin"}
 # Se recorren para que sus enlaces funcionen, pero sus notas no se buscan ni se revisan
 APARTE = {"versiones", "_versiones", "_taller"}
-IGNORAR = {".ds_store", "icon\r"}
+IGNORAR = {".ds_store", "icon\r", ".gitkeep"}
 OFFICE = (".docx", ".xlsx", ".pptx")
 TEXTO = {".md", ".txt", ".vtt", ".srt", ".html", ".htm", ".csv", ".json", ".rtf", ".eml"}
 
 BITACORA, TABLERO = "bitacora.md", "tablero.md"
 PROCESADOS = os.path.join(".brainme", "inbox-procesado")
+JARDIN = os.path.join(".brainme", "jardin.json")  # {nota: huella de su texto al revisarla}
+MAX_TABLERO = 40  # líneas con texto
 PROYECTOS = "proyectos"
 PLANTILLAS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates")
 
@@ -52,14 +57,15 @@ RE_PLACEHOLDER = re.compile(r"<[^<>\n]+>")
 RE_ANIO = re.compile(r"^\d{4}$")
 
 # Comandos de versiones anteriores: qué usar ahora
-VIEJOS = {"texto": "brainme leer <archivo>", "jardin": "brainme comprueba --todo", "verificar": "brainme comprueba --todo",
+VIEJOS = {"texto": "brainme leer <archivo>", "verificar": "brainme comprueba --todo",
           "sincroniza": "brainme comprueba", "mapa": "brainme leer <nota> (muestra sus enlaces)",
           "nombres": "brainme buscar <palabras>", "multiproyecto": "brainme estado, en la raíz de la carpeta multiproyecto",
           "espacio": "brainme estado, en la raíz de la carpeta multiproyecto",
           "guia": "lee references/<flujo>.md, en la carpeta del skill",
           "inventario": "brainme ordenar inventario", "mover": "brainme ordenar mover --plan <plan>",
           "respaldo": "brainme ordenar respaldo", "deshacer": "brainme ordenar deshacer",
-          "a-wikilinks": "brainme ordenar wikilinks"}
+          "a-wikilinks": "brainme ordenar wikilinks",
+          "sin-resumen": "brainme ordenar resumenes", "poner-resumenes": "brainme ordenar resumenes --poner <archivo>"}
 
 
 # ---------------------------------------------------------------- utilidades
@@ -342,7 +348,7 @@ def cmd_crear(args):
         print("Carpetas listas. %s ya tenía CLAUDE.md con brainme: lo dejé como estaba." % nombre)
         return
     texto = plantilla("CLAUDE.md", {"<Nombre del proyecto>": nombre, "<nombre de la carpeta>": nombre,
-                                    "<AAAA-MM-DD>": hoy()})
+                                    "<AAAA-MM-DD>": hoy(), "<versión>": VERSION})
     if trata:
         texto = re.sub(r"<una o dos frases[^>]*>", lambda m: trata, texto)
     if ficha:
@@ -371,7 +377,7 @@ def crear_multi(raiz, trata, general):
         sys.exit(2)
     nombre = os.path.basename(raiz)
     texto = plantilla("CLAUDE-multiproyecto.md", {"<Nombre de la carpeta multiproyecto>": nombre, "<nombre>": nombre,
-                                                  "<general>": general, "<AAAA-MM-DD>": hoy()})
+                                                  "<general>": general, "<AAAA-MM-DD>": hoy(), "<versión>": VERSION})
     if trata:
         texto = texto.replace("<una o dos frases>", trata)
     if actual:
@@ -468,7 +474,9 @@ def cmd_estado(args):
                                  else "sin bitácora todavía"))
     malas = revisar(p, p.notas)
     resumen = ["%s %s" % (len(v), k) for k, v in malas.items() if v and k in ("sin resumen", "con enlaces rotos", "sueltas")]
-    print("Notas: %d%s" % (len(p.notas), " · " + ", ".join(resumen) + " (brainme comprueba --todo)" if resumen else ""))
+    pendientes = len(por_revisar(p)[0])
+    print("Notas: %d%s%s" % (len(p.notas), " · " + ", ".join(resumen) + " (brainme comprueba --todo)" if resumen else "",
+                             " · %s sin revisar contra su original (brainme jardin)" % pendientes if pendientes else ""))
 
 
 def panorama(raiz, texto):
@@ -595,6 +603,10 @@ def problemas_de(p, notas, tope=20, hoy=False):
     rotos_tablero = sorted({d for d in destinos(tablero) if not p.existe(d)})
     if rotos_tablero:
         lineas.append("En el tablero, enlaces rotos: " + ", ".join("[[%s]]" % d for d in rotos_tablero))
+    largo = sum(1 for l in cuerpo_de(tablero).split("\n") if l.strip())
+    if largo > MAX_TABLERO:  # se carga en cada sesión: lo que sobra ocupa contexto y se sigue peor
+        lineas.append("El tablero tiene %d líneas (máximo %d): baja el detalle a su nota y deja el enlace."
+                      % (largo, MAX_TABLERO))
     return lineas
 
 
@@ -679,9 +691,10 @@ def ultima_actualizacion(cuerpo, largo=160):
     return ultima if len(ultima) <= largo else ultima[:largo - 1] + "…"
 
 
-def buscar_en(notas, leer, patrones):
+def buscar_en(notas, leer, patrones, atras=()):
     """[(cuántas palabras tiene, puntaje, nota)], de la mejor a la peor. Pesan más el nombre y el
-    resumen que el cuerpo, y lo que se sabe (01 a 03) que las fuentes y los entregables."""
+    resumen que el cuerpo, y lo que se sabe (01 a 03) que las fuentes y los entregables. Lo que ya
+    no rige (atras: archivado, revertido o reemplazado) va después de lo vigente."""
     halladas = []
     for r in notas:
         texto = leer(r)
@@ -692,7 +705,8 @@ def buscar_en(notas, leer, patrones):
         tiene = [max([peso for peso, c in campos if pat.search(c)] or [0]) for _, pat in patrones]
         if any(tiene):
             veces = sum(min(3, len(pat.findall(campos[-1][1]))) for _, pat in patrones)
-            halladas.append((sum(1 for x in tiene if x), sum(tiene) + veces / 10 + (r[:2] in ("01", "02", "03")) * 3, r))
+            halladas.append((sum(1 for x in tiene if x), sum(tiene) + veces / 10 + (r[:2] in ("01", "02", "03")) * 3
+                             - (r in atras) * 10, r))
     return sorted(halladas, key=lambda h: (-h[0], -h[1], h[2]))
 
 
@@ -739,9 +753,11 @@ def cmd_buscar(args):
 
 def buscar_una(p, patrones, tope):
     n = len(patrones)
-    halladas = buscar_en(p.notas, p.texto, patrones)
-    todas = [h for h in halladas if h[0] == n]
     reemplazos = p.reemplazos()
+    atras = set(reemplazos) | {r for r in p.notas if archivada(r) or (
+        r.startswith("02_decisions/") and valor(leer_fm(p.texto(r)), "estado").lower() == "revertida")}
+    halladas = buscar_en(p.notas, p.texto, patrones, atras)
+    todas = [h for h in halladas if h[0] == n]
     if not halladas:
         print("Ninguna nota habla de: %s." % ", ".join(r for r, _ in patrones))
     mostrar("Notas con todas las palabras", todas, p.texto, patrones, tope, reemplazos)
@@ -772,6 +788,73 @@ def buscar_una(p, patrones, tope):
         print("Bitácora (%d): %s" % (len(lineas), " / ".join(l[:160] for l in lineas[-3:])))
 
 
+# ------------------------------------------------------------------- jardín
+
+TANDA = 10
+
+
+def huella(texto):
+    return hashlib.sha1(texto.encode("utf-8")).hexdigest()[:16]
+
+
+def leer_jardin(raiz):
+    try:
+        return json.loads(leer_texto(os.path.join(raiz, JARDIN)) or "{}")
+    except ValueError:
+        return {}
+
+
+def por_revisar(p):
+    """(notas de 01 a 03 nuevas o cambiadas desde su última revisión, lo revisado). Primero lo
+    vigente, y en ello las decisiones, después lo que se da por sabido (sin certeza: supuesto) y lo
+    más enlazado: lo que más pesa si está mal."""
+    hechas = leer_jardin(p.raiz)
+    _, entra = p.enlaces()
+    reemplazos = p.reemplazos()
+    rango = {"02": 0, "01": 1, "03": 2}
+    pendientes = []
+    for r in p.notas:
+        if r[:2] in rango and not archivada(r) and hechas.get(r) != huella(p.texto(r)):
+            fm = leer_fm(p.texto(r))
+            ya_no_rige = r in reemplazos or valor(fm, "estado").lower() == "revertida"
+            supuesto = valor(fm, "certeza").lower() == "supuesto"
+            pendientes.append((ya_no_rige, rango[r[:2]], supuesto, -len(entra.get(r, ())), r))
+    return [r for *_, r in sorted(pendientes)], hechas
+
+
+def cmd_jardin(args):
+    p = Proyecto(args.raiz)
+    pendientes, hechas = por_revisar(p)
+    if args.hecho:
+        marcadas = []
+        for pedido in args.hecho:
+            rel = p.nota(pedido.strip().strip("[]"))
+            if rel:
+                hechas[rel] = huella(p.texto(rel))
+                marcadas.append(rel)
+            else:
+                print("No encuentro %s." % pedido)
+        escribir(os.path.join(p.raiz, JARDIN), json.dumps(hechas, ensure_ascii=False, indent=1, sort_keys=True))
+        quedan = [r for r in pendientes if r not in marcadas]
+        print("Revisadas: %s. Por revisar: %s." % (lista(marcadas, 10) or "ninguna", cuantos(len(quedan), "nota", "notas")))
+        return
+    if not pendientes:
+        print("Por revisar: 0 notas. Cada nota está revisada contra su original desde su último cambio.")
+        return
+    tanda = pendientes[:TANDA]
+    print("Por revisar: %s, nuevas o cambiadas desde su última revisión. Tanda de %d:" % (
+        cuantos(len(pendientes), "nota", "notas"), len(tanda)))
+    reemplazos = p.reemplazos()
+    for r in tanda:
+        texto = p.texto(r)
+        original, origen = original_de(p, texto), valor(leer_fm(texto), "origen")
+        fuente = "original: " + original if original else "origen: %s (sin archivo)" % origen if origen else "sin origen"
+        print("  %s%s · %s" % (wiki(r), marca(texto, r, reemplazos), fuente))
+    nombres = " ".join(nombre_nota(r) for r in tanda)
+    print("Léelas con sus originales: brainme leer --original %s" % nombres)
+    print("Al cerrar la tanda: brainme jardin --hecho %s" % nombres)
+
+
 # --------------------------------------------------------------------- leer
 
 MAX_LEER = 24000
@@ -793,8 +876,9 @@ def cmd_leer(args):
     p = Proyecto(args.raiz)
     sale, entra = p.enlaces()
     reemplazos = p.reemplazos()
-    gastado, quedan = 0, []
-    for pedido in args.cosas:
+    gastado, quedan, originales = 0, [], {}
+    pedidos = list(args.cosas)
+    for pedido in pedidos:
         if gastado > MAX_LEER:
             quedan.append(pedido)
             continue
@@ -810,16 +894,21 @@ def cmd_leer(args):
             original = original_de(p, texto)
             if original:
                 pie.append("Original: " + original)
+                if args.original:  # cada original una vez, después de las notas que salen de él
+                    if original not in originales:
+                        pedidos.append(original)
+                    originales.setdefault(original, []).append(wiki(rel))
             bloque = "=== %s\n\n%s\n\n%s\n" % (rel, texto.strip(), "\n".join(pie))
         elif os.path.isfile(ruta) and ruta.startswith(os.path.realpath(p.raiz) + os.sep):
-            bloque = "=== %s\n\n%s\n" % (objetivo, texto_de_archivo(ruta))
+            de = " · original de " + ", ".join(originales[objetivo]) if objetivo in originales else ""
+            bloque = "=== %s%s\n\n%s\n" % (objetivo, de, texto_de_archivo(ruta))
         else:
             print("No encuentro %s." % pedido)
             continue
         print(bloque)
         gastado += len(bloque)
     if quedan:
-        print("Faltan %d: brainme leer %s" % (len(quedan), " ".join(quedan)))
+        print("Faltan %d: brainme leer %s%s" % (len(quedan), "--original " if args.original else "", " ".join(quedan)))
 
 
 def texto_de_archivo(ruta):
@@ -1162,6 +1251,7 @@ def main():
 
     s = sub.add_parser("leer", help="notas o archivos completos")
     s.add_argument("cosas", nargs="+", metavar="nota-o-archivo")
+    s.add_argument("--original", action="store_true", help="también el original de cada nota, una vez")
     s.set_defaults(fn=cmd_leer)
 
     sub.add_parser("inbox", help="lo que hay en 00_inbox/").set_defaults(fn=cmd_inbox)
@@ -1175,6 +1265,10 @@ def main():
     s.add_argument("--todo", action="store_true")
     s.set_defaults(fn=cmd_comprueba)
 
+    s = sub.add_parser("jardin", help="la próxima tanda de notas por revisar contra su original")
+    s.add_argument("--hecho", nargs="+", metavar="nota", help="marca estas notas como revisadas")
+    s.set_defaults(fn=cmd_jardin)
+
     s = sub.add_parser("bitacora", help="agrega o muestra entradas de bitacora.md")
     s.add_argument("texto", nargs="?")
     s.add_argument("--sigue")
@@ -1184,10 +1278,11 @@ def main():
     s.set_defaults(fn=cmd_bitacora)
 
     s = sub.add_parser("ordenar", help="ordena una carpeta con avance previo, sin romper enlaces")
-    s.add_argument("accion", choices=["inventario", "respaldo", "mover", "deshacer", "wikilinks"])
+    s.add_argument("accion", choices=["inventario", "respaldo", "mover", "deshacer", "wikilinks", "resumenes"])
     s.add_argument("--plan", help="para mover: el plan en JSON")
     s.add_argument("--tabla", action="store_true", help="para inventario: una línea por archivo por ordenar")
     s.add_argument("--registro", help="para deshacer: el registro de un orden anterior")
+    s.add_argument("--poner", metavar="ARCHIVO", help="para resumenes: el JSON {nota: resumen} que escribe el ayudante")
     s.set_defaults(fn=cmd_ordenar)
 
     args = ap.parse_args()

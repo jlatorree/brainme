@@ -9,10 +9,9 @@ puede volver a leer en él, o el informe dice por qué no dejó nada.
    propuestas; las escribes tú, para que cada nota tenga un solo escritor.
 2. Lee cada archivo (`brainme leer <archivo>`) y quédate con lo que cambia algo para el
    proyecto: datos, acuerdos, dudas.
-3. Cada idea va a su nota (flujo Guardar), con el `origen` que dio `brainme inbox`. Si ya
-   tiene nota, amplíala con una línea en `## Actualizaciones` que termina en
-   `· origen: <origen>`. Lo que alguien propuso y nadie decidió es una pregunta abierta o
-   un supuesto.
+3. Cada idea va a su nota (flujo Guardar), con el `origen` que dio `brainme inbox`; si ya
+   tiene nota, se amplía ahí con ese mismo origen. Lo que alguien propuso y nadie decidió es
+   una pregunta abierta o un supuesto.
 4. Saca cada archivo del inbox: `brainme procesado <archivo> ...` guarda los de texto con
    los originales. Uno con valor propio (un contrato, un Excel, un PDF) va con
    `--a 04_sources`, y su nota lo enlaza: `[[contrato.pdf]]`.

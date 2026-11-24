@@ -1,12 +1,14 @@
 """brainme ordenar: pone en la estructura de brainme una carpeta que ya tenía trabajo, sin
-romper los enlaces de Obsidian. Es lo único de brainme que mueve archivos, y solo con un plan
-que el usuario aprobó, después de un respaldo y con deshacer.
+romper los enlaces de Obsidian. Es lo único de brainme que mueve archivos (con un plan que el
+usuario aprobó, después de un respaldo y con deshacer) o les agrega resúmenes que faltan.
 
   inventario   lo que hay y qué falta ordenar -> .brainme/inventario.json (con --tabla, una línea por archivo)
   respaldo     zip de todo el proyecto -> .brainme/respaldos/
   mover        ejecuta un plan (--plan .brainme/plan-orden.json) y corrige cada enlace que apunta a lo movido
   deshacer     revierte el último orden (o el de --registro)
   wikilinks    convierte los links markdown internos entre notas en wikilinks
+  resumenes    reparte en lotes las notas sin resumen, para el ayudante de resúmenes; con
+               --poner <archivo>, escribe los resúmenes que faltan (nunca cambia uno que ya está)
 
 Lo llama scripts/brainme.py (brainme ordenar <acción>). Usa solo la biblioteca estándar.
 """
@@ -27,7 +29,7 @@ PROTEGIDAS = {".git", ".obsidian", ".trash", ".claude", ".brainme", "graphify-ou
 # Se quedan donde están: no son "por ordenar"
 SE_QUEDAN_RAIZ = {"claude.md", "readme.md", "agents.md", ".gitignore", ".graphifyignore", "bitacora.md", "tablero.md"}
 CARPETAS_QUE_SE_QUEDAN = {"docs", "proyectos"}
-IGNORAR_ARCHIVOS = {".ds_store", "icon\r"}
+IGNORAR_ARCHIVOS = {".ds_store", "icon\r", ".gitkeep"}
 CATEGORIAS = {
     "nota": {".md"},
     "pdf": {".pdf"},
@@ -864,10 +866,103 @@ def cmd_a_wikilinks(args):
     if total:
         print("Respaldo previo: corre antes brainme ordenar respaldo si aún no lo hiciste.")
 
+# ------------------------------------------------------------------ resúmenes
+
+CARPETAS_NOTAS = ("01_knowledge", "02_decisions", "03_open_questions", "04_sources", "05_exports")
+LOTE = 25
+MAX_RESUMEN = 300
+RE_RESUMEN = re.compile(r"^(?:resumen|description|summary)[ \t]*:[ \t]*(.*)$", re.M)
+
+
+def frontmatter_de(texto):
+    if texto.startswith("---\n"):
+        fin = texto.find("\n---", 3)
+        if fin > 0:
+            return texto[4:fin]
+    return ""
+
+
+def tiene_resumen(texto):
+    m = RE_RESUMEN.search(frontmatter_de(texto))
+    valor = m.group(1).strip().strip("\"'").strip() if m else ""
+    return bool(valor) and not valor.startswith("<")
+
+
+def notas_sin_resumen(raiz):
+    salida = []
+    for rel in listar_archivos(raiz):
+        partes = rel.split("/")
+        if rel.lower().endswith(".md") and partes[0] in CARPETAS_NOTAS and "archive" not in partes:
+            texto, _ = leer_texto(os.path.join(raiz, rel))
+            if texto is not None and not tiene_resumen(texto):
+                salida.append(rel)
+    return salida
+
+
+def cmd_resumenes(args):
+    raiz = os.path.abspath(args.raiz)
+    carpeta = os.path.join(raiz, ".brainme", "resumenes")
+    if args.poner:
+        ruta = args.poner if os.path.isabs(args.poner) or os.path.isfile(args.poner) else os.path.join(raiz, args.poner)
+        try:
+            with open(ruta, encoding="utf-8") as f:
+                resumenes = json.load(f)
+        except (OSError, ValueError) as e:
+            print("No pude leer %s: %s" % (args.poner, e))
+            sys.exit(2)
+        escritos, tenian, malos = 0, 0, []
+        for rel, resumen in resumenes.items():
+            destino = os.path.realpath(os.path.join(raiz, rel))
+            resumen = " ".join(str(resumen).split())
+            if not destino.startswith(os.path.realpath(raiz) + os.sep) or not rel.lower().endswith(".md") \
+                    or not os.path.isfile(destino):
+                malos.append("%s (no está)" % rel)
+                continue
+            if not resumen or len(resumen) > MAX_RESUMEN:
+                malos.append("%s (resumen vacío o de más de %d caracteres)" % (rel, MAX_RESUMEN))
+                continue
+            texto, crlf = leer_texto(destino)
+            if texto is None:
+                malos.append("%s (no se puede leer)" % rel)
+                continue
+            if tiene_resumen(texto):
+                tenian += 1
+                continue
+            fm = frontmatter_de(texto)
+            if fm and RE_RESUMEN.search(fm):  # un resumen vacío o con <...>: se quita antes de poner el nuevo
+                texto = "---\n" + RE_RESUMEN.sub("", fm, count=1).replace("\n\n", "\n").strip("\n") + texto[4 + len(fm):]
+            escribir_texto(destino, fusionar_frontmatter(texto, {"resumen": resumen}, []), crlf)
+            escritos += 1
+        print("Resúmenes escritos: %d. Ya tenían resumen: %d." % (escritos, tenian))
+        if malos:
+            print("Sin escribir (%d): %s" % (len(malos), "; ".join(malos)))
+        return
+    faltan = notas_sin_resumen(raiz)
+    if os.path.isdir(carpeta):
+        for viejo in os.listdir(carpeta):
+            if viejo.startswith("lote-"):
+                os.remove(os.path.join(carpeta, viejo))
+    if not faltan:
+        print("Todas las notas tienen resumen.")
+        return
+    os.makedirs(carpeta, exist_ok=True)
+    lotes = []
+    for i in range(0, len(faltan), LOTE):
+        nombre = "lote-%02d.json" % (i // LOTE + 1)
+        with open(os.path.join(carpeta, nombre), "w", encoding="utf-8") as f:
+            json.dump(faltan[i:i + LOTE], f, ensure_ascii=False, indent=1)
+        lotes.append(os.path.join(".brainme", "resumenes", nombre))
+    print("Sin resumen: %d %s, en %d %s de hasta %d:" % (len(faltan), "nota" if len(faltan) == 1 else "notas",
+                                                         len(lotes), "lote" if len(lotes) == 1 else "lotes", LOTE))
+    for lote in lotes:
+        print("  " + lote)
+    print("Un brainme:resumidor por lote, todos a la vez.")
+
+
 # --------------------------------------------------------------------- entrada
 
 ACCIONES = {"inventario": cmd_inventario, "respaldo": cmd_respaldo, "mover": cmd_mover,
-            "deshacer": cmd_deshacer, "wikilinks": cmd_a_wikilinks}
+            "deshacer": cmd_deshacer, "wikilinks": cmd_a_wikilinks, "resumenes": cmd_resumenes}
 
 
 def ejecutar(args):

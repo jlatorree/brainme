@@ -1,8 +1,5 @@
 # Handoff: seguir en una sesión nueva
 
-Se sigue cuando el usuario pide un handoff o usa `/brainme:handoff`, normalmente porque
-el contexto de la sesión se está llenando: una sesión nueva arranca liviana.
-
 **Terminado cuando:** lo que surgió en la sesión está en notas, el tablero está al día, el
 handoff está en la bitácora y la sesión nueva quedó abierta (o el usuario tiene la frase
 para abrirla).
@@ -19,7 +16,7 @@ para abrirla).
    **Siguiente paso:** uno solo, concreto.
    **Pendiente:** decisiones por tomar y preguntas abiertas, con wikilinks.
    **Leer primero:** hasta 5 notas o archivos.
-   **Cuidado con:** lo que costó o no funcionó en esta sesión, si hubo.
+   **Trampas:** lo que costó o no funcionó en esta sesión, si hubo.
    ```
 4. `brainme bitacora --handoff .brainme/handoff.md`. Anota la fecha y hora que imprime.
 5. **Abre la sesión nueva** en esta carpeta, con el primer mensaje

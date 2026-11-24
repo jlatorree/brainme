@@ -243,6 +243,42 @@ class Proyecto(Base):
         self.assertIn("[[decision-sala]] [revertida, reemplazada por [[decision-sala-roja]]]",
                       self.brain("buscar", "sala azul"))
 
+    def test_jardin_por_tandas(self):
+        salida = self.brain("jardin")
+        self.assertIn("Por revisar: 5 notas", salida)  # 01 a 03, sin la archivada
+        self.assertLess(salida.index("[[decision-sala]]"), salida.index("[[aforo-del-taller]]"))  # decisiones primero
+        self.assertLess(salida.index("[[aforo-del-taller]]"), salida.index("[[publico-jubilado]]"))  # supuestos después
+        self.assertIn("[[aforo-del-taller]] · original: .brainme/inbox-procesado/2026-01-10/acta-octubre.md", salida)
+        self.assertIn("[[decision-sala]] · sin origen", salida)
+        self.assertIn("Notas: 6 · 5 sin revisar contra su original", self.brain("estado"))
+        self.assertIn("Por revisar: 3 notas", self.brain("jardin", "--hecho", "decision-sala", "[[aforo-del-taller]]"))
+        self.assertNotIn("[[decision-sala]]", self.brain("jardin"))
+        # Una nota que cambia vuelve a la lista
+        self.escribir("02_decisions/decision-sala.md", NOTAS["02_decisions/decision-sala.md"] + "Otra línea.\n")
+        self.assertIn("[[decision-sala]]", self.brain("jardin"))
+        self.brain("jardin", "--hecho", "decision-sala", "aforo-del-taller", "publico-jubilado", "pregunta-precio",
+                   "pregunta-horario")
+        self.assertIn("Por revisar: 0 notas", self.brain("jardin"))
+        self.assertNotIn("sin revisar", self.brain("estado"))
+
+    def test_leer_con_original(self):
+        salida = self.brain("leer", "--original", "aforo-del-taller", "aforo-del-taller")
+        self.assertEqual(salida.count("=== .brainme/inbox-procesado/2026-01-10/acta-octubre.md"), 1)
+        self.assertIn("· original de [[aforo-del-taller]]", salida)
+        self.assertIn("admite 35 personas en la sala azul", salida)
+        self.assertNotIn("sala azul.\n", self.brain("leer", "aforo-del-taller"))  # sin --original, solo la ruta
+
+    def test_tablero_largo(self):
+        self.escribir("tablero.md", "---\nactualizado: 2026-01-01\n---\n\n" + "".join("- paso %d\n" % i for i in range(45)))
+        self.assertIn("El tablero tiene 45 líneas (máximo 40)", self.brain("comprueba", "--todo"))
+
+    def test_buscar_pone_lo_vigente_primero(self):
+        self.escribir("02_decisions/decision-sala-roja.md", nota(
+            "decision", "Se usa la sala roja.", "Cambia la sala. [[aforo-del-taller]]", estado="tomada",
+            decidido_por='"la administradora"', reemplaza_a='"[[decision-sala]]"'))
+        salida = self.brain("buscar", "sala")
+        self.assertLess(salida.index("[[decision-sala-roja]]"), salida.index("[[decision-sala]] [reemplazada"))
+
     def test_bitacora(self):
         self.env["XDG_CONFIG_HOME"] = os.path.join(self.tmp.name, "sin-autor")
         self.assertIn("Falta el autor", self.brain("bitacora", "Algo", codigo=2))
@@ -271,7 +307,7 @@ class Proyecto(Base):
         self.assertEqual(self.huellas(), antes)
 
     def test_comandos_viejos(self):
-        for viejo, nuevo in (("texto", "brainme leer"), ("jardin", "comprueba --todo"), ("guia", "references/"),
+        for viejo, nuevo in (("texto", "brainme leer"), ("verificar", "comprueba --todo"), ("guia", "references/"),
                              ("inventario", "brainme ordenar inventario"), ("mover", "brainme ordenar mover")):
             self.assertIn(nuevo, self.brain(viejo, "x", codigo=2))
 
@@ -404,6 +440,25 @@ class Ordenar(Base):
     def test_wikilinks(self):
         self.assertIn("convertidos a wikilinks: 1", self.brain("ordenar", "wikilinks"))
         self.assertIn("[[Cliente A/ideas|notas]]", self.leer("Reuniones/2024-05-02 Kickoff.md"))
+
+    def test_resumenes(self):
+        self.plan(self.PLAN)
+        self.assertIn("Todas las notas tienen resumen", self.brain("ordenar", "resumenes"))  # lo del inbox no cuenta
+        self.escribir("01_knowledge/vacia.md", '---\ntipo: conocimiento\nresumen: "<la idea>"\n---\n\nVacía.\n')
+        self.escribir("01_knowledge/sin-frontmatter.md", "Solo texto.\n")
+        salida = self.brain("ordenar", "resumenes")
+        self.assertIn("Sin resumen: 2 notas, en 1 lote de hasta 25", salida)
+        self.assertIn('"01_knowledge/vacia.md"', self.leer(".brainme/resumenes/lote-01.json"))
+        self.escribir(".brainme/resumenes/r.json", json.dumps({
+            "05_exports/mapa.canvas": "No es nota.", "01_knowledge/vacia.md": "Una nota: vacía.",
+            "01_knowledge/precio-por-uso.md": "Otro resumen.", "../fuera.md": "x", "01_knowledge/larga.md": "x" * 400}))
+        salida = self.brain("ordenar", "resumenes", "--poner", ".brainme/resumenes/r.json")
+        self.assertIn("Resúmenes escritos: 1. Ya tenían resumen: 1.", salida)
+        self.assertIn("Sin escribir (3)", salida)
+        vacia = self.leer("01_knowledge/vacia.md")
+        self.assertIn('resumen: "Una nota: vacía."', vacia)
+        self.assertNotIn("<la idea>", vacia)
+        self.assertIn("resumen: Cobrar por uso.", self.leer("01_knowledge/precio-por-uso.md"))  # nunca cambia uno que ya está
 
     def test_no_ordena_la_raiz_de_un_multiproyecto(self):
         multi = os.path.join(self.tmp.name, "estudio")
