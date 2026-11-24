@@ -22,7 +22,9 @@ exacto:
 
 - **De qué trata**, en una o dos frases.
 - **Puntos clave:** hasta 8, cada uno con su página o sección.
-- **Decisiones, acuerdos y preguntas abiertas** que aparecen, con quién las dijo si consta.
+- **Decisiones y acuerdos** que aparecen, con quién los tomó si consta, y si cambian algo
+  decidido antes.
+- **Preguntas abiertas**, con quién podría responderlas si consta.
 - **Texto exacto** de plazos, montos, requisitos y compromisos, palabra por palabra y con
   página.
 - **Qué no se pudo leer** (páginas escaneadas, tablas rotas), si hubo.

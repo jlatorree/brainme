@@ -1,6 +1,6 @@
 {
   "name": "brainme",
-  "version": "4.0.0",
+  "version": "4.1.0",
   "description": "Segundo cerebro de proyectos en notas markdown (ideal para Obsidian): procesa el inbox en notas conectadas, responde qué se sabe y qué se decidió con enlaces a sus notas, lleva un tablero con lo vigente y una bitácora de cada sesión, y hace handoff a una sesión nueva. Con el modo multiproyecto, varios proyectos comparten un contexto general.",
   "author": {
     "name": "Jonathan Latorre",

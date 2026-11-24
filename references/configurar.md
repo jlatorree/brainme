@@ -15,8 +15,10 @@ proyecto y el tablero qué se busca ahora, con palabras del usuario.
    busca ahora y, si `brainme autor` dice "no definido", cómo quiere firmar.
 5. `brainme crear --trata "<de qué trata>"` y `brainme autor "<nombre>"`. En el tablero,
    el objetivo actual con sus palabras.
-6. **Lo que ya había** en la carpeta se queda donde está. Para que entre a las notas,
-   ofrece pasar al inbox lo que el usuario elija.
+6. **Lo que ya había** en la carpeta se queda donde está hasta que el usuario decida. Si hay
+   trabajo previo (notas, subcarpetas, documentos), ofrece ordenarlo con
+   `references/ordenar.md`: queda en la estructura sin romper sus enlaces, con respaldo y
+   deshacer. Si prefiere algo más chico, pasa al inbox lo que elija.
 7. **Mensaje final**, en pocas líneas, por ejemplo:
 
    ```

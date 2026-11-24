@@ -11,9 +11,11 @@ Comandos (se corren desde la raíz del proyecto):
   procesado   saca del inbox un archivo ya procesado, sin escribir encima de otro
   comprueba   lo escrito hoy (o, con --todo, todo el proyecto): resumen, enlaces y nombres
   bitacora    agrega o muestra entradas de bitacora.md, también los handoffs
+  ordenar     pone en la estructura una carpeta con avance previo (scripts/ordenar.py)
 
-Solo lee y escribe dentro del proyecto. No mueve ni reescribe notas. Usa solo la
-biblioteca estándar de Python (3.9 o superior).
+Solo lee y escribe dentro del proyecto. No mueve ni reescribe notas, salvo `ordenar mover` y
+`ordenar deshacer`, que mueven archivos con un plan aprobado y corrigen sus enlaces. Usa solo
+la biblioteca estándar de Python (3.9 o superior).
 """
 
 import argparse
@@ -26,7 +28,7 @@ import unicodedata
 import zipfile
 import xml.etree.ElementTree as ET
 
-VERSION = "4.0.0"
+VERSION = "4.1.0"
 
 CARPETAS = ["00_inbox", "01_knowledge", "02_decisions", "03_open_questions", "04_sources", "05_exports"]
 CARPETAS_NOTAS = ("01_knowledge", "02_decisions", "03_open_questions", "04_sources", "05_exports")
@@ -54,7 +56,10 @@ VIEJOS = {"texto": "brainme leer <archivo>", "jardin": "brainme comprueba --todo
           "sincroniza": "brainme comprueba", "mapa": "brainme leer <nota> (muestra sus enlaces)",
           "nombres": "brainme buscar <palabras>", "multiproyecto": "brainme estado, en la raíz de la carpeta multiproyecto",
           "espacio": "brainme estado, en la raíz de la carpeta multiproyecto",
-          "guia": "lee references/<flujo>.md, en la carpeta del skill"}
+          "guia": "lee references/<flujo>.md, en la carpeta del skill",
+          "inventario": "brainme ordenar inventario", "mover": "brainme ordenar mover --plan <plan>",
+          "respaldo": "brainme ordenar respaldo", "deshacer": "brainme ordenar deshacer",
+          "a-wikilinks": "brainme ordenar wikilinks"}
 
 
 # ---------------------------------------------------------------- utilidades
@@ -109,6 +114,12 @@ def leer_fm(texto):
 def resumen_de(fm):
     """El resumen de una nota (en notas antiguas, a veces description o summary)."""
     return fm.get("resumen") or fm.get("description") or fm.get("summary") or ""
+
+
+def valor(fm, nombre):
+    """Un campo del frontmatter, vacío si quedó el <...> de la plantilla."""
+    v = (fm.get(nombre) or "").strip()
+    return "" if RE_PLACEHOLDER.search(v) else v
 
 
 def cuerpo_de(texto):
@@ -236,6 +247,16 @@ class Proyecto:
     def nota(self, objetivo):
         """Nota del proyecto a la que apunta un wikilink, o None."""
         return self.por_stem.get(self.stem(objetivo))
+
+    def reemplazos(self):
+        """{decisión: la decisión que la reemplaza}, según el reemplaza_a de cada una."""
+        salida = {}
+        for r in self.notas:
+            for d in destinos(leer_fm(self.texto(r)).get("reemplaza_a") or ""):
+                vieja = self.nota(d)
+                if vieja and vieja != r:
+                    salida[vieja] = r
+        return salida
 
     def enlaces(self):
         """(sale, entra): de cada nota, las notas del proyecto que enlaza y las que la enlazan."""
@@ -387,8 +408,9 @@ def preguntas_abiertas(p):
         if r.startswith("03_open_questions/") and not archivada(r):
             fm = leer_fm(p.texto(r))
             if not (fm.get("estado") or "abierta").lower().startswith("resuelta"):
-                abiertas.append((orden.get((fm.get("prioridad") or "").lower(), 3), fm.get("prioridad") or "", r))
-    return [(prio, r) for _, prio, r in sorted(abiertas)]
+                prio = valor(fm, "prioridad")
+                abiertas.append((orden.get(prio.lower(), 3), prio, r, valor(fm, "quien_puede_responder")))
+    return [(prio, r, quien) for _, prio, r, quien in sorted(abiertas)]
 
 
 def ultima_entrada(raiz):
@@ -426,8 +448,8 @@ def cmd_estado(args):
                                         (" ..." if len(inbox) > 8 else "") if inbox else ""))
     abiertas = preguntas_abiertas(p)
     print("Preguntas abiertas: %d" % len(abiertas))
-    for prio, r in abiertas[:10]:
-        print("  %s%s" % ("[%s] " % prio if prio else "", wiki(r)))
+    for prio, r, quien in abiertas[:10]:
+        print("  %s%s%s" % ("[%s] " % prio if prio else "", wiki(r), " · puede responder: " + quien if quien else ""))
     if len(abiertas) > 10:
         print("  ... y %d más" % (len(abiertas) - 10))
     decisiones = sorted((r for r in p.notas if r.startswith("02_decisions/") and not archivada(r)),
@@ -506,14 +528,18 @@ def palabras_nombre(rel, prefijo):
     return {w for w in re.split(r"[-_ ]+", plano(n)) if len(w) > 2 and w not in VACIAS | {"decision", "pregunta", "nota"}}
 
 
-def revisar(p, notas):
+def revisar(p, notas, hoy=False):
     """{problema: [notas]} según las reglas de una nota: resumen, al menos un enlace a otra nota,
-    ningún enlace roto y, en un proyecto de una carpeta multiproyecto, su prefijo."""
-    malas = {"sin resumen": [], "sueltas": [], "con enlaces rotos": [], "sin el prefijo": []}
-    rotos = {}
+    ningún enlace roto y, en un proyecto de una carpeta multiproyecto, su prefijo. Una decisión
+    tomada dice quién la tomó y una pregunta abierta, su prioridad. Lo escrito hoy (hoy=True)
+    dice además quién lo escribió: de lo escrito antes a mano no siempre se sabe."""
+    malas = {"sin resumen": [], "sueltas": [], "con enlaces rotos": [], "sin el prefijo": [], "sin autor": [],
+             "sin decidido_por": [], "sin prioridad": [], "reemplazo sin cerrar": []}
+    rotos, reemplazos = {}, p.reemplazos()
     for r in notas:
         texto = p.texto(r)
-        if not resumen_de(leer_fm(texto)):
+        fm = leer_fm(texto)
+        if not resumen_de(fm):
             malas["sin resumen"].append(r)
         ds = destinos(texto)
         faltan = sorted({d for d in ds if not p.existe(d)})
@@ -522,9 +548,21 @@ def revisar(p, notas):
             rotos[r] = faltan
         if not any(p.enlaza_nota(d, nombre_nota(r)) for d in ds):
             malas["sueltas"].append(r)
-        if p.prefijo and not archivada(r) and not nombre_nota(r).lower().startswith(p.prefijo.lower()):
+        if archivada(r):
+            continue
+        if p.prefijo and not nombre_nota(r).lower().startswith(p.prefijo.lower()):
             malas["sin el prefijo"].append(r)
-    malas["rotos"] = rotos
+        if hoy and not valor(fm, "autor"):
+            malas["sin autor"].append(r)
+        estado = valor(fm, "estado").lower()
+        if r.startswith("02_decisions/"):
+            if estado in ("tomada", "revertida") and not valor(fm, "decidido_por"):
+                malas["sin decidido_por"].append(r)
+            if r in reemplazos and estado != "revertida":
+                malas["reemplazo sin cerrar"].append(r)
+        if r.startswith("03_open_questions/") and not estado.startswith("resuelta") and not valor(fm, "prioridad"):
+            malas["sin prioridad"].append(r)
+    malas["rotos"], malas["reemplazos"] = rotos, reemplazos
     return malas
 
 
@@ -533,20 +571,26 @@ def de_hoy(p):
     return [r for r in p.notas if os.path.getmtime(os.path.join(p.raiz, r)) >= inicio]
 
 
-def problemas_de(p, notas, tope=20):
-    malas = revisar(p, notas)
+def problemas_de(p, notas, tope=20, hoy=False):
+    malas = revisar(p, notas, hoy)
     lineas = []
     textos = {"sin resumen": "Sin resumen", "sueltas": "Sin enlace a otra nota",
-              "con enlaces rotos": "Con enlaces rotos", "sin el prefijo": "Sin el prefijo %s" % p.prefijo}
+              "con enlaces rotos": "Con enlaces rotos", "sin el prefijo": "Sin el prefijo %s" % p.prefijo,
+              "sin autor": "Sin autor (brainme autor)", "sin decidido_por": "Decisiones sin decidido_por",
+              "sin prioridad": "Preguntas abiertas sin prioridad",
+              "reemplazo sin cerrar": "Decisiones reemplazadas que no dicen estado: revertida"}
     for k, titulo in textos.items():
         if malas[k]:
             if k == "con enlaces rotos":
                 detalle = "; ".join("%s -> %s" % (wiki(r), ", ".join("[[%s]]" % d for d in malas["rotos"][r]))
                                     for r in malas[k][:tope])
-                lineas.append("%s (%d): %s%s" % (titulo, len(malas[k]), detalle,
-                                                  " y %d más" % (len(malas[k]) - tope) if len(malas[k]) > tope else ""))
+            elif k == "reemplazo sin cerrar":
+                detalle = "; ".join("%s (la reemplaza %s)" % (wiki(r), wiki(malas["reemplazos"][r])) for r in malas[k][:tope])
             else:
-                lineas.append("%s (%d): %s" % (titulo, len(malas[k]), lista(malas[k], tope)))
+                detalle = lista(malas[k], tope)
+            lineas.append("%s (%d): %s%s" % (titulo, len(malas[k]), detalle,
+                                              " y %d más" % (len(malas[k]) - tope)
+                                              if len(malas[k]) > tope and k in ("con enlaces rotos", "reemplazo sin cerrar") else ""))
     tablero = leer_texto(os.path.join(p.raiz, TABLERO)) or ""
     rotos_tablero = sorted({d for d in destinos(tablero) if not p.existe(d)})
     if rotos_tablero:
@@ -580,7 +624,7 @@ def cmd_comprueba(args):
         print("\n".join(lineas) if lineas else "Revisé %s: todo en orden." % cuantos(len(p.notas), "nota", "notas"))
         return
     hoy_ = de_hoy(p)
-    lineas = problemas_de(p, hoy_)
+    lineas = problemas_de(p, hoy_, hoy=True)
     if lineas:
         print("Por corregir en lo escrito hoy:\n" + "\n".join(lineas))
     elif hoy_:
@@ -652,20 +696,26 @@ def buscar_en(notas, leer, patrones):
     return sorted(halladas, key=lambda h: (-h[0], -h[1], h[2]))
 
 
-def marca(texto, rel):
+def marca(texto, rel, reemplazos=None):
+    """Lo que hay que saber antes de creerle a la nota: si está archivada, si es un supuesto y,
+    en una decisión, si se revirtió o la reemplazó otra."""
     fm = leer_fm(texto)
-    marcas = (["archivada"] if archivada(rel) else []) + (["supuesto"] if (fm.get("certeza") or "").lower() == "supuesto" else [])
+    marcas = (["archivada"] if archivada(rel) else []) + (["supuesto"] if valor(fm, "certeza").lower() == "supuesto" else [])
+    if rel.startswith("02_decisions/") and valor(fm, "estado").lower() == "revertida":
+        marcas.append("revertida")
+    if reemplazos and rel in reemplazos:
+        marcas.append("reemplazada por %s" % wiki(reemplazos[rel]))
     return " [%s]" % ", ".join(marcas) if marcas else ""
 
 
-def mostrar(titulo, halladas, leer, patrones, tope):
+def mostrar(titulo, halladas, leer, patrones, tope, reemplazos=None):
     if not halladas:
         return
     print("%s (%d):" % (titulo, len(halladas)))
     for _, _, r in halladas[:tope]:
         texto = leer(r)
         resumen = resumen_de(leer_fm(texto))
-        print("  %s%s (%s)%s" % (wiki(r), marca(texto, r), r.rsplit("/", 1)[0], ": " + resumen[:200] if resumen else ""))
+        print("  %s%s (%s)%s" % (wiki(r), marca(texto, r, reemplazos), r.rsplit("/", 1)[0], ": " + resumen[:200] if resumen else ""))
         frase, ultima = linea_con(cuerpo_de(texto), patrones), ultima_actualizacion(cuerpo_de(texto))
         if frase:
             print("      … " + frase)
@@ -691,11 +741,12 @@ def buscar_una(p, patrones, tope):
     n = len(patrones)
     halladas = buscar_en(p.notas, p.texto, patrones)
     todas = [h for h in halladas if h[0] == n]
+    reemplazos = p.reemplazos()
     if not halladas:
         print("Ninguna nota habla de: %s." % ", ".join(r for r, _ in patrones))
-    mostrar("Notas con todas las palabras", todas, p.texto, patrones, tope)
+    mostrar("Notas con todas las palabras", todas, p.texto, patrones, tope, reemplazos)
     if len(todas) < 5:
-        mostrar("Con algunas de las palabras", [h for h in halladas if h[0] < n], p.texto, patrones, tope)
+        mostrar("Con algunas de las palabras", [h for h in halladas if h[0] < n], p.texto, patrones, tope, reemplazos)
     minimo = min(2, n)
     if p.general:
         notas = [r for r in listar(p.general) if es_nota(r)]
@@ -741,6 +792,7 @@ def original_de(p, texto):
 def cmd_leer(args):
     p = Proyecto(args.raiz)
     sale, entra = p.enlaces()
+    reemplazos = p.reemplazos()
     gastado, quedan = 0, []
     for pedido in args.cosas:
         if gastado > MAX_LEER:
@@ -753,6 +805,8 @@ def cmd_leer(args):
             texto = p.texto(rel)
             pie = ["Enlaza: " + (lista(sorted(sale.get(rel, ()), key=nombre_nota), 15) or "ninguna nota"),
                    "La enlazan: " + (lista(sorted(entra.get(rel, ()), key=nombre_nota), 15) or "ninguna nota")]
+            if rel in reemplazos:
+                pie.append("La reemplaza: " + wiki(reemplazos[rel]))
             original = original_de(p, texto)
             if original:
                 pie.append("Original: " + original)
@@ -1061,9 +1115,17 @@ def cmd_bitacora(args):
               % (" Próximo paso: %s." % paso.rstrip(".") if paso else ""))
     if RE_PROYECTO.search(leer_texto(os.path.join(raiz, "CLAUDE.md")) or ""):
         p = Proyecto(raiz)
-        lineas = problemas_de(p, de_hoy(p))
+        lineas = problemas_de(p, de_hoy(p), hoy=True)
         if lineas:
             print("Antes de terminar, corrige:\n" + "\n".join(lineas))
+
+
+# ------------------------------------------------------------------ ordenar
+
+def cmd_ordenar(args):
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import ordenar
+    ordenar.ejecutar(args)
 
 
 # --------------------------------------------------------------------- main
@@ -1120,6 +1182,13 @@ def main():
     s.add_argument("--ultimas", type=int)
     s.add_argument("--handoff-ultimo", action="store_true")
     s.set_defaults(fn=cmd_bitacora)
+
+    s = sub.add_parser("ordenar", help="ordena una carpeta con avance previo, sin romper enlaces")
+    s.add_argument("accion", choices=["inventario", "respaldo", "mover", "deshacer", "wikilinks"])
+    s.add_argument("--plan", help="para mover: el plan en JSON")
+    s.add_argument("--tabla", action="store_true", help="para inventario: una línea por archivo por ordenar")
+    s.add_argument("--registro", help="para deshacer: el registro de un orden anterior")
+    s.set_defaults(fn=cmd_ordenar)
 
     args = ap.parse_args()
     args.fn(args)

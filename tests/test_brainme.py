@@ -6,6 +6,7 @@ armados en una carpeta temporal.
 
 import datetime
 import hashlib
+import json
 import os
 import subprocess
 import sys
@@ -31,9 +32,9 @@ NOTAS = {
     "01_knowledge/publico-jubilado.md": nota("conocimiento", "Vendrían más jubilados que niños.",
                                              "Sospecha sin comprobar. Ver [[aforo-del-taller]].", certeza="supuesto"),
     "02_decisions/decision-sala.md": nota("decision", "Se usa la sala azul.", "Se usa la sala azul. [[aforo-del-taller]]",
-                                          estado="tomada"),
+                                          estado="tomada", decidido_por='"la administradora"'),
     "03_open_questions/pregunta-precio.md": nota("pregunta", "¿Cuánto cobrar?", "Falta decidir. [[aforo-del-taller]]",
-                                                 estado="abierta", prioridad="alta"),
+                                                 estado="abierta", prioridad="alta", quien_puede_responder='"Rosa"'),
     "03_open_questions/pregunta-horario.md": nota("pregunta", "¿Qué horario?", "Sin decidir. [[decision-sala]]",
                                                   estado="abierta", prioridad="baja"),
     "03_open_questions/archive/pregunta-sala.md": nota("pregunta", "¿Qué sala?", "Resuelta en [[decision-sala]].",
@@ -122,7 +123,8 @@ class Proyecto(Base):
         self.brain("bitacora", "Abrí el taller", "--sigue", "Fijar el precio")
         salida = self.brain("estado")
         self.assertIn("Inbox sin procesar: 1 -> apuntes.md", salida)
-        self.assertIn("Preguntas abiertas: 2\n  [alta] [[pregunta-precio]]\n  [baja] [[pregunta-horario]]", salida)
+        self.assertIn("Preguntas abiertas: 2\n  [alta] [[pregunta-precio]] · puede responder: Rosa\n"
+                      "  [baja] [[pregunta-horario]]\n", salida)
         self.assertNotIn("pregunta-sala", salida)
         self.assertIn("Últimas decisiones: [[decision-sala]]", salida)
         self.assertIn("por llenar", salida)
@@ -184,8 +186,8 @@ class Proyecto(Base):
 
     def test_comprueba_lo_de_hoy(self):
         self.assertIn("Hoy no se escribió ninguna nota", self.brain("comprueba"))
-        self.escribir("01_knowledge/buena.md", nota("conocimiento", "Buena.", "Ver [[aforo-del-taller]] y [[contrato.pdf]]."),
-                      viejo=False)
+        self.escribir("01_knowledge/buena.md", nota("conocimiento", "Buena.", "Ver [[aforo-del-taller]] y [[contrato.pdf]].",
+                                                    autor='"Ana P."'), viejo=False)
         self.escribir("04_sources/contrato.pdf", "%PDF")
         self.assertIn("Lo escrito hoy está completo (1 nota)", self.brain("comprueba"))
         self.escribir("01_knowledge/sin-resumen.md", nota("conocimiento", "", "Ver [[buena]]."), viejo=False)
@@ -196,6 +198,7 @@ class Proyecto(Base):
         self.assertIn("Sin resumen (1): [[sin-resumen]]", salida)
         self.assertIn("Sin enlace a otra nota (1): [[suelta]]", salida)
         self.assertIn("Con enlaces rotos (1): [[rota]] -> [[no-existe]]", salida)
+        self.assertIn("Sin autor (brainme autor) (3): [[rota]], [[sin-resumen]], [[suelta]]", salida)
         self.assertNotIn("aforo-del-taller", salida)  # lo de otros días no se revisa
         # La bitácora lo recuerda al final de cada flujo
         self.assertIn("Antes de terminar, corrige:", self.brain("bitacora", "Guardé notas"))
@@ -213,6 +216,32 @@ class Proyecto(Base):
         self.assertIn("En el tablero, enlaces rotos: [[no-esta]]", salida)
         self.assertIn("Posibles duplicados (1): [[aforo-del-taller]] y [[aforo-taller]]", salida)
         self.assertIn("Supuestos, por si ya se confirmaron (1): [[publico-jubilado]]", salida)
+
+    def test_campos_de_decisiones_y_preguntas(self):
+        self.escribir("02_decisions/decision-precio.md", nota("decision", "Se cobra 20 soles.", "[[pregunta-precio]]",
+                                                               estado="tomada", decidido_por='"<persona o instancia>"'))
+        self.escribir("02_decisions/decision-horario.md", nota("decision", "Quizá de noche.", "[[pregunta-horario]]",
+                                                                estado="propuesta"))
+        self.escribir("03_open_questions/pregunta-cupo.md", nota("pregunta", "¿Hay cupo?", "[[aforo-del-taller]]",
+                                                                  estado="abierta"))
+        salida = self.brain("comprueba", "--todo")
+        self.assertIn("Decisiones sin decidido_por (1): [[decision-precio]]", salida)  # el <...> no cuenta
+        self.assertIn("Preguntas abiertas sin prioridad (1): [[pregunta-cupo]]", salida)  # la resuelta no
+        self.assertNotIn("Sin autor", salida)  # de lo escrito antes no siempre se sabe
+
+    def test_decisiones_que_cambian(self):
+        self.escribir("02_decisions/decision-sala-roja.md", nota(
+            "decision", "Se usa la sala roja.", "Cambia la sala. [[aforo-del-taller]]", estado="tomada",
+            decidido_por='"la administradora"', reemplaza_a='"[[decision-sala]]"'))
+        self.assertIn("Decisiones reemplazadas que no dicen estado: revertida (1): [[decision-sala]] (la reemplaza "
+                      "[[decision-sala-roja]])", self.brain("comprueba", "--todo"))
+        self.assertIn("[[decision-sala]] [reemplazada por [[decision-sala-roja]]]", self.brain("buscar", "sala azul"))
+        self.assertIn("La reemplaza: [[decision-sala-roja]]", self.brain("leer", "decision-sala"))
+        self.escribir("02_decisions/decision-sala.md", NOTAS["02_decisions/decision-sala.md"].replace(
+            "estado: tomada", "estado: revertida"))
+        self.assertNotIn("reemplazadas", self.brain("comprueba", "--todo"))
+        self.assertIn("[[decision-sala]] [revertida, reemplazada por [[decision-sala-roja]]]",
+                      self.brain("buscar", "sala azul"))
 
     def test_bitacora(self):
         self.env["XDG_CONFIG_HOME"] = os.path.join(self.tmp.name, "sin-autor")
@@ -242,7 +271,8 @@ class Proyecto(Base):
         self.assertEqual(self.huellas(), antes)
 
     def test_comandos_viejos(self):
-        for viejo, nuevo in (("texto", "brainme leer"), ("jardin", "comprueba --todo"), ("guia", "references/")):
+        for viejo, nuevo in (("texto", "brainme leer"), ("jardin", "comprueba --todo"), ("guia", "references/"),
+                             ("inventario", "brainme ordenar inventario"), ("mover", "brainme ordenar mover")):
             self.assertIn(nuevo, self.brain(viejo, "x", codigo=2))
 
 
@@ -292,3 +322,91 @@ class Multiproyecto(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Ordenar(Base):
+    """Una carpeta con avance previo: notas en carpetas propias, wikilinks con ruta, un link
+    markdown relativo, una imagen incrustada, un canvas y dos notas con el mismo nombre."""
+
+    ANTES = {
+        "Reuniones/2024-05-02 Kickoff.md": "# Kickoff\nSe habló de [[Ideas/precio por uso]] y ver "
+                                           "[notas](../Cliente%20A/ideas.md).\n![[diagrama.png]]\n`[[Ideas/precio por uso]]`\n",
+        "Ideas/precio por uso.md": "---\ntipo: idea\n---\n# Precio por uso\nVer [[Reuniones/2024-05-02 Kickoff|el kickoff]].\n",
+        "Cliente A/ideas.md": "# Ideas A\nNada [[precio por uso]].\n",
+        "Ideas/ideas.md": "# Ideas\n",
+        "Reuniones/diagrama.png": "PNG",
+        "mapa.canvas": '{"nodes": [{"id": "1", "type": "file", "file": "Ideas/precio por uso.md"}], "edges": []}',
+    }
+    PLAN = {"movimientos": [
+        {"de": "Reuniones/2024-05-02 Kickoff.md", "a": "00_inbox/", "tags": ["reuniones"]},
+        {"de": "Reuniones/diagrama.png", "a": "00_inbox/"},
+        {"de": "Ideas/precio por uso.md", "a": "01_knowledge/precio-por-uso.md", "frontmatter": {"resumen": "Cobrar por uso."},
+         "tags": ["ideas"]},
+        {"de": "Cliente A/ideas.md", "a": "00_inbox/ideas-cliente-a.md", "tags": ["cliente-a"]},
+        {"de": "Ideas/ideas.md", "a": "00_inbox/"},
+        {"de": "mapa.canvas", "a": "05_exports/"},
+    ]}
+
+    def setUp(self):
+        super().setUp()
+        self.brain("crear", "--trata", "Un proyecto que ya tenía notas")
+        for rel, texto in self.ANTES.items():
+            self.escribir(rel, texto)
+        os.makedirs(os.path.join(self.raiz, ".obsidian"))
+
+    def plan(self, plan):
+        self.escribir(".brainme/plan-orden.json", json.dumps(plan))
+        return self.brain("ordenar", "mover", "--plan", ".brainme/plan-orden.json")
+
+    def test_inventario_no_cambia_nada(self):
+        antes = self.huellas()
+        salida = self.brain("ordenar", "inventario", "--tabla")
+        self.assertIn("6 por ordenar", salida)
+        self.assertIn("ideas: Cliente A/ideas.md, Ideas/ideas.md", salida)  # mismo nombre
+        self.assertIn("Ideas/precio por uso.md | nota | Precio por uso", salida)
+        despues = self.huellas()
+        self.assertEqual({k: v for k, v in despues.items() if not k.startswith(".brainme")}, antes)
+
+    def test_mover_corrige_enlaces_y_deshacer_los_devuelve(self):
+        self.assertIn("Respaldo creado", self.brain("ordenar", "respaldo"))
+        salida = self.plan(self.PLAN)
+        self.assertIn("Archivos movidos: 6", salida)
+        self.assertIn("Enlaces rotos: 0 antes, 0 después", salida)
+        kickoff = self.leer("00_inbox/2024-05-02 Kickoff.md")
+        self.assertIn("[[precio-por-uso]]", kickoff)
+        self.assertIn("[notas](ideas-cliente-a.md)", kickoff)
+        self.assertIn("`[[Ideas/precio por uso]]`", kickoff)  # el código no se toca
+        self.assertIn("tags: [reuniones]", kickoff)
+        precio = self.leer("01_knowledge/precio-por-uso.md")
+        self.assertIn("tipo: idea", precio)  # lo que el usuario tenía se conserva
+        self.assertIn("resumen: Cobrar por uso.", precio)
+        self.assertIn("[[2024-05-02 Kickoff|el kickoff]]", precio)
+        self.assertIn("01_knowledge/precio-por-uso.md", self.leer("05_exports/mapa.canvas"))
+        for carpeta in ("Ideas", "Reuniones", "Cliente A"):
+            self.assertFalse(os.path.exists(os.path.join(self.raiz, carpeta)), carpeta)
+        self.assertIn("Archivos movidos: 6", self.brain("ordenar", "deshacer"))
+        self.assertIn("[notas](../Cliente%20A/ideas.md)", self.leer("Reuniones/2024-05-02 Kickoff.md"))
+        self.assertIn('"file": "Ideas/precio por uso.md"', self.leer("mapa.canvas"))
+        self.assertIn("No hay ningún orden que deshacer", self.brain("ordenar", "deshacer"))
+
+    def test_plan_con_error_no_mueve_nada(self):
+        antes = self.huellas()
+        self.escribir(".brainme/plan-orden.json", json.dumps({"movimientos": [
+            {"de": "Ideas/ideas.md", "a": "00_inbox/x.md"}, {"de": "Cliente A/ideas.md", "a": "00_inbox/x.md"},
+            {"de": "no-existe.md", "a": "00_inbox/"}, {"de": "mapa.canvas", "a": ".obsidian/"}]}))
+        salida = self.brain("ordenar", "mover", "--plan", ".brainme/plan-orden.json", codigo=2)
+        self.assertIn("No se movió nada", salida)
+        self.assertIn("Varios archivos irían a 00_inbox/x.md", salida)
+        self.assertIn("No existe: no-existe.md", salida)
+        self.assertIn("Destino no permitido", salida)
+        self.assertEqual({k: v for k, v in self.huellas().items() if not k.startswith(".brainme")}, antes)
+
+    def test_wikilinks(self):
+        self.assertIn("convertidos a wikilinks: 1", self.brain("ordenar", "wikilinks"))
+        self.assertIn("[[Cliente A/ideas|notas]]", self.leer("Reuniones/2024-05-02 Kickoff.md"))
+
+    def test_no_ordena_la_raiz_de_un_multiproyecto(self):
+        multi = os.path.join(self.tmp.name, "estudio")
+        os.makedirs(multi)
+        self.brain("crear", "--multiproyecto", raiz=multi)
+        self.assertIn("raíz de una carpeta multiproyecto", self.brain("ordenar", "inventario", raiz=multi, codigo=2))

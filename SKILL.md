@@ -1,6 +1,6 @@
 ---
 name: brainme
-description: 'Segundo cerebro de un proyecto en notas markdown (Obsidian), o de varios proyectos que comparten un contexto general (multiproyecto). Úsalo cuando el usuario diga "brainme" o quiera: configurar la carpeta, ponerse al día, preguntar qué sabe o qué decidió el proyecto, procesar el inbox o notas de reunión, guardar algo, hacer un entregable con lo que hay, revisar las notas (jardín), hacer un handoff, o abrir, ver o cerrar los proyectos de un multiproyecto.'
+description: 'Segundo cerebro de un proyecto en notas markdown (Obsidian), o de varios proyectos que comparten un contexto general (multiproyecto). Úsalo cuando el usuario diga "brainme" o quiera: configurar la carpeta, ponerse al día, preguntar qué sabe o qué decidió el proyecto, procesar el inbox o notas de reunión, guardar algo, hacer un entregable con lo que hay, revisar las notas (jardín), ordenar una carpeta que ya tenía trabajo, hacer un handoff, o abrir, ver o cerrar los proyectos de un multiproyecto.'
 ---
 
 # brainme
@@ -42,10 +42,11 @@ found", usa `python3 "<carpeta de este skill>/scripts/brainme.py" <comando>`.
 | `leer <nota o archivo> ...` | notas completas con sus enlaces y su original; texto de Word, Excel y PowerPoint |
 | `inbox` | qué hay en `00_inbox/` y el `origen` de lo que salga de cada archivo |
 | `procesado <archivo> ... [--a <carpeta>]` | saca del inbox lo ya procesado, sin escribir encima de nada |
-| `comprueba [--todo]` | lo escrito hoy, o todo el proyecto: resumen, enlaces y nombres |
+| `comprueba [--todo]` | lo escrito hoy, o todo el proyecto: resumen, enlaces, nombres y los campos de cada tipo |
 | `bitacora "<qué>" --sigue "<qué sigue>"` | anota la sesión; también `--ultimas N`, `--handoff <archivo>`, `--handoff-ultimo` |
 | `autor ["Nombre"]` | quién firma la bitácora en este computador |
 | `crear` | carpetas, tablero y `CLAUDE.md` (lo usan la configuración y el multiproyecto) |
+| `ordenar <acción>` | ordenar una carpeta con avance previo (flujo Ordenar) |
 
 ## Flujos
 
@@ -108,11 +109,16 @@ usuario decidió dejarla así.
    si cuentan distinto un mismo hecho: rige lo más reciente que alguien sostiene, y la
    otra nota se corrige con una línea en `## Actualizaciones`; si no se sabe cuál rige,
    una pregunta abierta.
-3. Propón en una tabla corta qué harás con cada cosa: el resumen que falta, el enlace a la
-   nota que corresponde, el par de duplicados que se fusiona (la que queda recibe en
-   `## Actualizaciones` cada dato de la otra, que pasa al `archive/` de su carpeta), la
-   contradicción, el supuesto que ya se confirmó.
+3. Propón en una tabla corta qué harás con cada cosa que listó. Un par de duplicados se
+   fusiona: la que queda recibe en `## Actualizaciones` cada dato de la otra, que pasa al
+   `archive/` de su carpeta. El resumen y el enlace que faltan salen de la nota; quién
+   decidió o cuánto pesa una pregunta, de la nota, su original o el usuario.
 4. Con el OK del usuario, aplícalo y corre otra vez `brainme comprueba --todo`.
+
+### Ordenar ("ordena esta carpeta", o una carpeta que ya tenía trabajo)
+
+Lee `references/ordenar.md` y síguelo. `brainme ordenar mover` corre solo aquí, con el plan
+que el usuario aprobó.
 
 ### Handoff ("ayúdame con un handoff", "retoma el handoff")
 
@@ -134,10 +140,13 @@ Lee `references/multiproyecto.md` y sigue su parte.
 .brainme/            originales ya procesados, fuera de Obsidian
 ```
 
-- **Campos:** `tipo`, `fecha`, `resumen` (la idea en una o dos frases) y `origen` (el
-  archivo, o quién lo dijo y cuándo). Decisiones y preguntas llevan también `estado`. Lo
-  deducido, y lo que alguien da como opinión aunque lo diga con seguridad, lleva
-  `certeza: supuesto`.
+- **Campos:** `tipo`, `fecha`, `resumen` (la idea en una o dos frases), `origen` (el
+  archivo, o quién lo dijo y cuándo) y `autor` (quién la escribió). Además:
+  - decisión: `estado` y, si está tomada, `decidido_por` (el cliente, el equipo, una persona);
+  - pregunta: `estado`, `prioridad` (alta, media o baja: cuánto frena el proyecto) y
+    `quien_puede_responder`;
+  - lo deducido, y lo que alguien da como opinión aunque lo diga con seguridad:
+    `certeza: supuesto`.
 - **Solo lo que consta:** la nota dice lo que dijo su original o el usuario. Lo que
   deduces va aparte, dicho como deducción.
 - **Nombres:** minúsculas, con guiones y sin tildes, únicos: `decision-modelo-de-precio`,
@@ -148,9 +157,12 @@ Lee `references/multiproyecto.md` y sigue su parte.
 - **Datos críticos** (plazos, montos, requisitos, compromisos): palabra por palabra en
   `## Texto exacto`, con su original.
 - **Ampliar y corregir:** la idea que ya tiene nota se amplía ahí, con una línea en
-  `## Actualizaciones` (fecha, qué cambió, origen). El `resumen` pasa a decir lo vigente;
-  lo anterior se queda como historia. Lo que escribió otra persona se cambia con OK del
-  usuario.
+  `## Actualizaciones` (fecha, qué cambió, origen y quién). El `resumen` pasa a decir lo
+  vigente; lo anterior se queda como historia. Una nota cuyo `autor` es otra persona se
+  cambia con OK del usuario.
+- **Una decisión que cambia** va en una nota nueva, con `reemplaza_a: "[[decision-anterior]]"`.
+  La anterior pasa a `estado: revertida`, con una línea en `## Actualizaciones` que enlaza la
+  nueva.
 - **Documentos largos** (PDF, Office o transcripción de más de ~3.000 palabras): los lee el
   ayudante `brainme:lector`, que devuelve un borrador de notas. Sin el plugin, un
   subagente general con las instrucciones de `agents/lector.md`.

@@ -9,7 +9,8 @@ apuntes, actas y documentos, y después le preguntas qué sabe, qué decidiste y
 - **Inbox:** sueltas ahí lo que llega (apuntes, reuniones, PDFs, Word). brainme lo
   convierte en notas y deja el original guardado.
 - **Notas:** una idea por nota (lo que se sabe, lo que se decidió, lo que sigue abierto),
-  con un resumen, de dónde salió y enlaces a otras notas.
+  con un resumen, de dónde salió, quién la escribió y enlaces a otras notas. Cada decisión
+  dice quién la tomó y cuál reemplaza; cada pregunta, su prioridad y quién puede responderla.
 - **Tablero:** el objetivo, el plan y los próximos pasos. Se carga en cada sesión.
 - **Bitácora:** qué se hizo en cada sesión, quién y qué sigue.
 - **Tú no programas:** Claude corre los comandos y te cuenta en simple qué hizo.
@@ -27,6 +28,7 @@ reglas.
 | "guarda esto" | Lo deja en su nota, enlazada a las demás. |
 | "haz un informe de…" | Lo arma con las notas y dice qué es supuesto. |
 | "revisa las notas" | Encuentra lo suelto, roto o duplicado y te propone cómo arreglarlo. |
+| "ordena esta carpeta" | Si ya tenías trabajo, lo pone en la estructura sin romper los enlaces, con respaldo y deshacer. |
 | "ayúdame con un handoff" | Guarda lo pendiente y abre una sesión nueva que sigue desde ahí. |
 | "nuevo proyecto: …" | En una carpeta multiproyecto, abre un proyecto con su ficha. |
 
@@ -74,9 +76,10 @@ bitacora.md          qué se hizo en cada sesión, quién y qué sigue
 | Archivo | Rol |
 | --- | --- |
 | `SKILL.md` | El skill: flujos y cómo se escriben las notas. |
-| `references/` | Configurar, inbox, handoff, multiproyecto y redacción. |
+| `references/` | Configurar, inbox, ordenar, handoff, multiproyecto y redacción. |
 | `templates/` | Nota, tablero y `CLAUDE.md` de proyecto y de carpeta multiproyecto. |
-| `scripts/brainme.py` | Nueve comandos: estado, buscar, leer, inbox, procesado, comprueba, bitácora, autor y crear. Python 3, sin dependencias. Lee el proyecto y no mueve ni reescribe notas. |
+| `scripts/brainme.py` | Diez comandos: estado, buscar, leer, inbox, procesado, comprueba, bitácora, autor, crear y ordenar. Python 3, sin dependencias. Lee el proyecto y no mueve ni reescribe notas. |
+| `scripts/ordenar.py` | Lo único que mueve archivos: ordena una carpeta con avance previo según un plan aprobado, corrige los enlaces y permite deshacer. |
 | `agents/lector.md` | Ayudante que lee documentos largos. |
 | `commands/handoff.md` | El comando `/brainme:handoff`. |
 | `tests/` | Pruebas del script, sin gastar tokens: `python3 -m unittest discover tests`. |
